@@ -90,6 +90,16 @@ esp_err_t espnow_transport_init(uint8_t channel)
     return ESP_OK;
 }
 
+esp_err_t espnow_transport_set_pmk(const uint8_t pmk[ESP_NOW_KEY_LEN])
+{
+    if (pmk == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ESP_LOGI(TAG, "Installing ESP-NOW PMK len=%d", ESP_NOW_KEY_LEN);
+    return esp_now_set_pmk(pmk);
+}
+
 esp_err_t espnow_transport_add_peer(const uint8_t peer_mac[ESP_NOW_ETH_ALEN], bool encrypted, const uint8_t *lmk)
 {
     esp_now_peer_info_t peer = {0};
