@@ -5,6 +5,7 @@
 #include "esp_check.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "freertos/queue.h"
@@ -26,7 +27,7 @@ static void wifi_init(uint8_t channel)
     ESP_ERROR_CHECK(esp_wifi_start());
     ESP_ERROR_CHECK(esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE));
 
-    ESP_LOGI(TAG, "Wi-Fi STA started on channel %u", channel);
+    ESP_LOGI(TAG, "Wi-Fi STA started on channel %u", (unsigned)channel);
 }
 
 static void espnow_send_cb(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)
