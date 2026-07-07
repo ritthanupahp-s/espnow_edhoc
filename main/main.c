@@ -11,9 +11,10 @@
 #include "espnow_transport.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "key_manager.h"
 #include "nvs_flash.h"
 
-static const char *TAG = "milestone1";
+static const char *TAG = "milestone2";
 
 #define APP_MAGIC 0xA7
 #define APP_VERSION 1
@@ -31,6 +32,15 @@ typedef struct __attribute__((packed)) {
     uint16_t payload_len;
     uint8_t payload[APP_PAYLOAD_MAX_LEN];
 } app_packet_t;
+
+static const char *security_mode_str(void)
+{
+#if ESPNOW_STATIC_ENCRYPTION_ENABLED
+    return "static-lmk-encrypted";
+#else
+    return "unencrypted";
+#endif
+}
 
 static bool mac_is_all_value(const uint8_t mac[ESP_NOW_ETH_ALEN], uint8_t value)
 {
@@ -81,7 +91,8 @@ static esp_err_t send_app_message(app_msg_type_t type, uint16_t seq, const char 
     size_t wire_len = offsetof(app_packet_t, payload) + text_len;
 
     ESP_LOGI(TAG,
-             "APP TX: type=%s seq=%u payload=\"%.*s\" wire_len=%u",
+             "APP TX: mode=%s type=%s seq=%u payload=\"%.*s\" wire_len=%u",
+             security_mode_str(),
              type == APP_MSG_PING ? "PING" : "PONG",
              (unsigned)seq,
              (int)text_len,
@@ -115,7 +126,8 @@ static void handle_rx_packet(const espnow_rx_packet_t *rx)
                            packet->type == APP_MSG_PONG ? "PONG" : "UNKNOWN";
 
     ESP_LOGI(TAG,
-             "APP RX: from=" MACSTR " type=%s seq=%u payload=\"%.*s\" wire_len=%d",
+             "APP RX: mode=%s from=" MACSTR " type=%s seq=%u payload=\"%.*s\" wire_len=%d",
+             security_mode_str(),
              MAC2STR(rx->src_mac),
              type_str,
              (unsigned)packet->seq,
@@ -125,11 +137,15 @@ static void handle_rx_packet(const espnow_rx_packet_t *rx)
 
 #if DEVICE_IS_INITIATOR
     if (packet->type == APP_MSG_PONG) {
+#if ESPNOW_STATIC_ENCRYPTION_ENABLED
+        ESP_LOGI(TAG, "Milestone 2 PASS: received PONG using static encrypted ESP-NOW for seq=%u", (unsigned)packet->seq);
+#else
         ESP_LOGI(TAG, "Milestone 1 PASS: received PONG for seq=%u", (unsigned)packet->seq);
+#endif
     }
 #else
     if (packet->type == APP_MSG_PING) {
-        ESP_ERROR_CHECK(send_app_message(APP_MSG_PONG, packet->seq, "hello-ack from responder"));
+        ESP_ERROR_CHECK(send_app_message(APP_MSG_PONG, packet->seq, "static-lmk encrypted ack from responder"));
     }
 #endif
 }
@@ -139,13 +155,13 @@ static void app_task(void *arg)
     uint16_t seq = 1;
     TickType_t last_ping_tick = xTaskGetTickCount();
 
-    ESP_LOGI(TAG, "App task started");
+    ESP_LOGI(TAG, "App task started, security_mode=%s", security_mode_str());
 
     while (true) {
 #if DEVICE_IS_INITIATOR
         TickType_t now = xTaskGetTickCount();
         if ((now - last_ping_tick) >= pdMS_TO_TICKS(PING_INTERVAL_MS)) {
-            esp_err_t err = send_app_message(APP_MSG_PING, seq++, "hello from initiator");
+            esp_err_t err = send_app_message(APP_MSG_PING, seq++, "static-lmk encrypted hello from initiator");
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to send PING: %s", esp_err_to_name(err));
             }
@@ -168,13 +184,19 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_read_mac(own_mac, ESP_MAC_WIFI_STA));
 
     ESP_LOGI(TAG, "========================================");
-    ESP_LOGI(TAG, "EDHOC ESP-NOW thesis demo - Milestone 1");
+#if ESPNOW_STATIC_ENCRYPTION_ENABLED
+    ESP_LOGI(TAG, "EDHOC ESP-NOW thesis demo - Milestone 2");
+    ESP_LOGI(TAG, "Goal: static encrypted ESP-NOW unicast using manual LMK");
+#else
+    ESP_LOGI(TAG, "EDHOC ESP-NOW thesis demo - Milestone 1 compatibility mode");
+#endif
 #if DEVICE_IS_INITIATOR
     ESP_LOGI(TAG, "Role: INITIATOR");
 #else
     ESP_LOGI(TAG, "Role: RESPONDER");
 #endif
     ESP_LOGI(TAG, "Channel: %d", ESPNOW_CHANNEL);
+    ESP_LOGI(TAG, "Security mode: %s", security_mode_str());
     espnow_transport_print_mac("Own STA MAC", own_mac);
     espnow_transport_print_mac("Configured peer MAC", PEER_MAC);
     ESP_LOGI(TAG, "========================================");
@@ -189,7 +211,11 @@ void app_main(void)
         }
     }
 
+#if ESPNOW_STATIC_ENCRYPTION_ENABLED
+    ESP_ERROR_CHECK(key_manager_enable_static_espnow_encryption(PEER_MAC));
+#else
     ESP_ERROR_CHECK(espnow_transport_add_peer(PEER_MAC, false, NULL));
+#endif
 
-    xTaskCreate(app_task, "milestone1_app", 4096, NULL, 4, NULL);
+    xTaskCreate(app_task, "milestone_app", 4096, NULL, 4, NULL);
 }
