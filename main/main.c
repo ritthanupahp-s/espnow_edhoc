@@ -83,7 +83,7 @@ static esp_err_t send_app_message(app_msg_type_t type, uint16_t seq, const char 
     ESP_LOGI(TAG,
              "APP TX: type=%s seq=%u payload=\"%.*s\" wire_len=%u",
              type == APP_MSG_PING ? "PING" : "PONG",
-             seq,
+             (unsigned)seq,
              (int)text_len,
              text,
              (unsigned)wire_len);
@@ -107,7 +107,7 @@ static void handle_rx_packet(const espnow_rx_packet_t *rx)
 
     size_t header_len = offsetof(app_packet_t, payload);
     if (packet->payload_len > APP_PAYLOAD_MAX_LEN || header_len + packet->payload_len > (size_t)rx->data_len) {
-        ESP_LOGW(TAG, "APP RX: invalid payload length=%u wire_len=%d", packet->payload_len, rx->data_len);
+        ESP_LOGW(TAG, "APP RX: invalid payload length=%u wire_len=%d", (unsigned)packet->payload_len, rx->data_len);
         return;
     }
 
@@ -118,14 +118,14 @@ static void handle_rx_packet(const espnow_rx_packet_t *rx)
              "APP RX: from=" MACSTR " type=%s seq=%u payload=\"%.*s\" wire_len=%d",
              MAC2STR(rx->src_mac),
              type_str,
-             packet->seq,
-             packet->payload_len,
-             packet->payload,
+             (unsigned)packet->seq,
+             (int)packet->payload_len,
+             (const char *)packet->payload,
              rx->data_len);
 
 #if DEVICE_IS_INITIATOR
     if (packet->type == APP_MSG_PONG) {
-        ESP_LOGI(TAG, "Milestone 1 PASS: received PONG for seq=%u", packet->seq);
+        ESP_LOGI(TAG, "Milestone 1 PASS: received PONG for seq=%u", (unsigned)packet->seq);
     }
 #else
     if (packet->type == APP_MSG_PING) {
