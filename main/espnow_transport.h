@@ -18,6 +18,7 @@ typedef struct {
 } espnow_rx_packet_t;
 
 esp_err_t espnow_transport_init(uint8_t channel);
+esp_err_t espnow_transport_set_pmk(const uint8_t pmk[ESP_NOW_KEY_LEN]);
 esp_err_t espnow_transport_add_peer(const uint8_t peer_mac[ESP_NOW_ETH_ALEN], bool encrypted, const uint8_t *lmk);
 esp_err_t espnow_transport_send(const uint8_t peer_mac[ESP_NOW_ETH_ALEN], const void *data, size_t len);
 bool espnow_transport_recv(espnow_rx_packet_t *packet, TickType_t timeout_ticks);
