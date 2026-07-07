@@ -1,120 +1,103 @@
-| Supported Targets | ESP32 | ESP32-C2 | ESP32-C3 | ESP32-C5 | ESP32-C6 | ESP32-C61 | ESP32-S2 | ESP32-S3 |
-| ----------------- | ----- | -------- | -------- | -------- | -------- | --------- | -------- | -------- |
+# EDHOC-Based Dynamic Pairing for ESP-NOW on ESP32
 
-# ESPNOW Example
+This repository is being built incrementally for a thesis proof of concept.
 
-(See the README.md file in the upper level 'examples' directory for more information about examples.)
+Current implementation: **Milestone 1 — minimal unencrypted ESP-NOW unicast ping/pong**.
 
-This example shows how to use ESPNOW of wifi. Example does the following steps:
+## Milestone 1 goal
 
-* Start WiFi.
-* Initialize ESPNOW.
-* Register ESPNOW sending or receiving callback function.
-* Add ESPNOW peer information.
-* Send and receive ESPNOW data.
+Start from the ESP-IDF ESP-NOW example and reduce it to a clean 2-board baseline:
 
-This example need at least two ESP devices:
-
-* In order to get the MAC address of the other device, Device1 firstly send broadcast ESPNOW data with 'state' set as 0.
-* When Device2 receiving broadcast ESPNOW data from Device1 with 'state' as 0, adds Device1 into the peer list.
-  Then start sending broadcast ESPNOW data with 'state' set as 1.
-* When Device1 receiving broadcast ESPNOW data with 'state' as 1, compares the local magic number with that in the data.
-  If the local one is bigger than that one, stop sending broadcast ESPNOW data and starts sending unicast ESPNOW data to Device2.
-* If Device2 receives unicast ESPNOW data, also stop sending broadcast ESPNOW data.
-
-In practice, if the MAC address of the other device is known, it's not required to send/receive broadcast ESPNOW data first,
-just add the device into the peer list and send/receive unicast ESPNOW data.
-
-There are a lot of "extras" on top of ESPNOW data, such as type, state, sequence number, CRC and magic in this example. These "extras" are
-not required to use ESPNOW. They are only used to make this example to run correctly. However, it is recommended that users add some "extras"
-to make ESPNOW data more safe and more reliable.
-
-## How to use example
-
-### Configure the project
-
-```
-idf.py menuconfig
+```text
+ESP32 A -- unencrypted ESP-NOW unicast PING --> ESP32 B
+ESP32 A <-- unencrypted ESP-NOW unicast PONG -- ESP32 B
 ```
 
-* Set WiFi mode (station or SoftAP) under Example Configuration Options.
-* Set ESPNOW primary master key under Example Configuration Options.
-  This parameter must be set to the same value for sending and recving devices.
-* Set ESPNOW local master key under Example Configuration Options.
-  This parameter must be set to the same value for sending and recving devices.
-* Set Channel under Example Configuration Options.
-  The sending device and the recving device must be on the same channel.
-* Set Send count and Send delay under Example Configuration Options.
-* Set Send len under Example Configuration Options.
-* Set Enable Long Range Options.
-  When this parameter is enabled, the ESP32 device will send data at the PHY rate of 512Kbps or 256Kbps
-  then the data can be transmitted over long range between two ESP32 devices.
+No EDHOC yet. No LMK yet. No encryption yet.
 
-### Build and Flash
+## Files
 
-Build the project and flash it to the board, then run monitor tool to view serial output:
-
-```
-idf.py -p PORT flash monitor
+```text
+main/main.c                 Application logic: initiator sends PING, responder replies PONG
+main/device_config.h        Role, Wi-Fi channel, and peer MAC address
+main/espnow_transport.c     Wi-Fi + ESP-NOW setup, callbacks, peer add, send, receive queue
+main/espnow_transport.h     Transport interface
 ```
 
-(To exit the serial monitor, type ``Ctrl-]``.)
+## How to run Milestone 1
 
-See the Getting Started Guide for full steps to configure and use ESP-IDF to build projects.
+### 1. Build once and flash both boards to read their MAC addresses
 
-## Example Output
+Leave `PEER_MAC` as all zeros for the first flash.
 
-Here is the example of ESPNOW receiving device console output.
-
-```
-I (898) phy: phy_version: 3960, 5211945, Jul 18 2018, 10:40:07, 0, 0
-I (898) wifi: mode : sta (30:ae:a4:80:45:68)
-I (898) espnow_example: WiFi started
-I (898) ESPNOW: espnow [version: 1.0] init
-I (5908) espnow_example: Start sending broadcast data
-I (6908) espnow_example: send data to ff:ff:ff:ff:ff:ff
-I (7908) espnow_example: send data to ff:ff:ff:ff:ff:ff
-I (52138) espnow_example: send data to ff:ff:ff:ff:ff:ff
-I (52138) espnow_example: Receive 0th broadcast data from: 30:ae:a4:0c:34:ec, len: 200
-I (53158) espnow_example: send data to ff:ff:ff:ff:ff:ff
-I (53158) espnow_example: Receive 1th broadcast data from: 30:ae:a4:0c:34:ec, len: 200
-I (54168) espnow_example: send data to ff:ff:ff:ff:ff:ff
-I (54168) espnow_example: Receive 2th broadcast data from: 30:ae:a4:0c:34:ec, len: 200
-I (54168) espnow_example: Receive 0th unicast data from: 30:ae:a4:0c:34:ec, len: 200
-I (54678) espnow_example: Receive 1th unicast data from: 30:ae:a4:0c:34:ec, len: 200
-I (55668) espnow_example: Receive 2th unicast data from: 30:ae:a4:0c:34:ec, len: 200
+```bash
+idf.py set-target esp32
+idf.py build
+idf.py -p COMx flash monitor
 ```
 
-Here is the example of ESPNOW sending device console output.
+Each board will print something like:
 
-```
-I (915) phy: phy_version: 3960, 5211945, Jul 18 2018, 10:40:07, 0, 0
-I (915) wifi: mode : sta (30:ae:a4:0c:34:ec)
-I (915) espnow_example: WiFi started
-I (915) ESPNOW: espnow [version: 1.0] init
-I (5915) espnow_example: Start sending broadcast data
-I (5915) espnow_example: Receive 41th broadcast data from: 30:ae:a4:80:45:68, len: 200
-I (5915) espnow_example: Receive 42th broadcast data from: 30:ae:a4:80:45:68, len: 200
-I (5925) espnow_example: Receive 44th broadcast data from: 30:ae:a4:80:45:68, len: 200
-I (5935) espnow_example: Receive 45th broadcast data from: 30:ae:a4:80:45:68, len: 200
-I (6965) espnow_example: send data to ff:ff:ff:ff:ff:ff
-I (6965) espnow_example: Receive 46th broadcast data from: 30:ae:a4:80:45:68, len: 200
-I (7975) espnow_example: send data to ff:ff:ff:ff:ff:ff
-I (7975) espnow_example: Receive 47th broadcast data from: 30:ae:a4:80:45:68, len: 200
-I (7975) espnow_example: Start sending unicast data
-I (7975) espnow_example: send data to 30:ae:a4:80:45:68
-I (9015) espnow_example: send data to 30:ae:a4:80:45:68
-I (9015) espnow_example: Receive 48th broadcast data from: 30:ae:a4:80:45:68, len: 200
-I (10015) espnow_example: send data to 30:ae:a4:80:45:68
-I (16075) espnow_example: send data to 30:ae:a4:80:45:68
-I (17075) espnow_example: send data to 30:ae:a4:80:45:68
-I (24125) espnow_example: send data to 30:ae:a4:80:45:68
+```text
+Own STA MAC: 24:6F:28:11:22:33
+Configured peer MAC: 00:00:00:00:00:00
+PEER_MAC is not configured yet.
 ```
 
-## Troubleshooting
+### 2. Configure Board A
 
-If ESPNOW data can not be received from another device, maybe the two devices are not
-on the same channel or the primary key and local key are different.
+In `main/device_config.h`:
 
-In real application, if the receiving device is in station mode only and it connects to an AP,
-modem sleep should be disabled. Otherwise, it may fail to revceive ESPNOW data from other devices.
+```c
+#define DEVICE_IS_INITIATOR 1
+
+static const uint8_t PEER_MAC[6] = {
+    /* Board B STA MAC */
+    0x24, 0x6F, 0x28, 0xAA, 0xBB, 0xCC
+};
+```
+
+Build and flash Board A.
+
+### 3. Configure Board B
+
+In `main/device_config.h`:
+
+```c
+#define DEVICE_IS_INITIATOR 0
+
+static const uint8_t PEER_MAC[6] = {
+    /* Board A STA MAC */
+    0x24, 0x6F, 0x28, 0x11, 0x22, 0x33
+};
+```
+
+Build and flash Board B.
+
+### 4. Expected logs
+
+Initiator:
+
+```text
+Role: INITIATOR
+APP TX: type=PING seq=1 payload="hello from initiator"
+TX callback: dest=24:6F:28:AA:BB:CC status=SUCCESS
+APP RX: from=24:6F:28:AA:BB:CC type=PONG seq=1 payload="hello-ack from responder"
+Milestone 1 PASS: received PONG for seq=1
+```
+
+Responder:
+
+```text
+Role: RESPONDER
+APP RX: from=24:6F:28:11:22:33 type=PING seq=1 payload="hello from initiator"
+APP TX: type=PONG seq=1 payload="hello-ack from responder"
+TX callback: dest=24:6F:28:11:22:33 status=SUCCESS
+```
+
+## Notes
+
+- Both boards must use the same `ESPNOW_CHANNEL`.
+- This milestone uses unencrypted unicast only.
+- The receive callback copies packets into a FreeRTOS queue and the application task processes them later. This keeps heavy work out of the Wi-Fi callback.
+- Milestone 2 will reuse this structure and add static LMK encrypted ESP-NOW.
