@@ -3,36 +3,42 @@
 #include <stdint.h>
 
 /*
- * Milestone 3 configuration
+ * Milestone 4 configuration
  * -------------------------
  * Flash one board with DEVICE_IS_INITIATOR = 1.
  * Flash the other board with DEVICE_IS_INITIATOR = 0.
  *
  * PEER_MAC must be the other ESP32 board's printed STA MAC address.
  *
- * Milestone 3 sends fake EDHOC message_1/message_2/message_3 payloads over an
- * EDHOC-style ESP-NOW transport frame. This active test uses unencrypted
- * ESP-NOW because real EDHOC will run before the dynamic LMK exists.
+ * Milestone 4 transports real EDHOC message_1/message_2/message_3 byte strings
+ * from RFC 9529 Section 3 over the ESP-NOW EDHOC transport frame.
+ *
+ * This is still a transport milestone, not the final live cryptographic EDHOC
+ * library integration. The next step is to replace these RFC trace vectors with
+ * messages composed and processed by libedhoc.
  */
 #define DEVICE_IS_INITIATOR 1
 
 /* Both ESP32 boards must use the same Wi-Fi channel. */
 #define ESPNOW_CHANNEL 1
 
-/* Initiator starts the fake EDHOC exchange once after this delay. */
-#define FAKE_EDHOC_START_DELAY_MS 2000
+/* Initiator starts the EDHOC trace exchange once after this delay. */
+#define EDHOC_TRACE_START_DELAY_MS 2000
 
 /* Keep payloads small for the first prototype. ESP-NOW v1 safe limit is 250 bytes. */
 #define APP_PAYLOAD_MAX_LEN 64
 
-/* Active Milestone 3 mode: fake EDHOC transport over unencrypted ESP-NOW. */
-#define FAKE_EDHOC_TRANSPORT_ENABLED 1
+/* Active Milestone 4 mode: RFC 9529 EDHOC trace bytes over unencrypted ESP-NOW. */
+#define EDHOC_TRACE_TRANSPORT_ENABLED 1
 
-/* Keep Milestone 2 control keys in the repo, but disable static encryption for Milestone 3. */
+/* Milestone 3 fake string mode is now disabled. */
+#define FAKE_EDHOC_TRANSPORT_ENABLED 0
+
+/* Keep Milestone 2 control keys in the repo, but disable static encryption for Milestone 4. */
 #define ESPNOW_STATIC_ENCRYPTION_ENABLED 0
 
-/* One fixed fake EDHOC session ID for the two-board prototype. */
-#define FAKE_EDHOC_SESSION_ID 0x1234
+/* One fixed EDHOC transport session ID for the two-board prototype. */
+#define EDHOC_TRACE_SESSION_ID 0x1234
 
 /*
  * ESP-NOW PMK and LMK are both 16 bytes.
@@ -41,7 +47,7 @@
  * PMK: Primary Master Key, used by ESP-NOW to protect LMKs internally.
  * LMK: Local Master Key, installed per peer for encrypted unicast frames.
  *
- * Milestone 2 uses these. Milestone 3 leaves them unused.
+ * Milestone 2 uses these. Milestone 4 leaves them unused.
  */
 static const uint8_t ESPNOW_STATIC_PMK[16] = {
     0x10, 0x11, 0x12, 0x13,
