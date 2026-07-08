@@ -1,7 +1,7 @@
 #include <stdint.h>
-#include <string.h>
 
 #include "device_config.h"
+#include "edhoc_trace_vectors.h"
 #include "edhoc_transport.h"
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -13,7 +13,7 @@
 #include "key_manager.h"
 #include "nvs_flash.h"
 
-static const char *TAG = "milestone3";
+static const char *TAG = "milestone4";
 
 typedef enum {
     PAIR_STATE_IDLE = 0,
@@ -27,7 +27,9 @@ typedef enum {
 
 static const char *security_mode_str(void)
 {
-#if FAKE_EDHOC_TRANSPORT_ENABLED
+#if EDHOC_TRACE_TRANSPORT_ENABLED
+    return "unencrypted-rfc9529-edhoc-trace";
+#elif FAKE_EDHOC_TRANSPORT_ENABLED
     return "unencrypted-fake-edhoc-transport";
 #elif ESPNOW_STATIC_ENCRYPTION_ENABLED
     return "static-lmk-encrypted";
@@ -92,47 +94,67 @@ static esp_err_t nvs_init(void)
     return ret;
 }
 
-static esp_err_t send_fake_edhoc_message(edhoc_transport_msg_type_t type, uint16_t seq, const char *payload)
+static esp_err_t send_edhoc_trace_message(edhoc_transport_msg_type_t type, uint16_t seq)
 {
-    const size_t payload_len = strlen(payload);
+    const uint8_t *payload = NULL;
+    size_t payload_len = 0;
 
-    ESP_LOGI(TAG,
-             "FAKE EDHOC APP TX: type=%s seq=%u payload=\"%s\"",
-             edhoc_transport_type_str(type),
-             (unsigned)seq,
-             payload);
+    if (!edhoc_trace_get_message(type, &payload, &payload_len)) {
+        ESP_LOGE(TAG, "No RFC 9529 trace payload for type=%s", edhoc_transport_type_str(type));
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    edhoc_trace_log_message("EDHOC TRACE APP TX", type, payload, payload_len);
 
     return edhoc_transport_send(
         PEER_MAC,
         type,
-        FAKE_EDHOC_SESSION_ID,
+        EDHOC_TRACE_SESSION_ID,
         seq,
-        (const uint8_t *)payload,
+        payload,
         payload_len
     );
 }
 
-static void handle_fake_edhoc_message(const edhoc_transport_msg_t *msg, pairing_state_t *state)
+static bool verify_received_trace(const edhoc_transport_msg_t *msg)
+{
+    if (msg->session_id != EDHOC_TRACE_SESSION_ID) {
+        ESP_LOGW(TAG, "Ignoring message for unexpected session: got=0x%04X expected=0x%04X",
+                 (unsigned)msg->session_id,
+                 (unsigned)EDHOC_TRACE_SESSION_ID);
+        return false;
+    }
+
+    if (!edhoc_trace_verify_message((edhoc_transport_msg_type_t)msg->type, msg->payload, msg->payload_len)) {
+        ESP_LOGW(TAG,
+                 "Received %s but payload does not match the expected RFC 9529 trace bytes",
+                 edhoc_transport_type_str(msg->type));
+        return false;
+    }
+
+    edhoc_trace_log_message("EDHOC TRACE APP RX verified", (edhoc_transport_msg_type_t)msg->type, msg->payload, msg->payload_len);
+    return true;
+}
+
+static void handle_edhoc_trace_message(const edhoc_transport_msg_t *msg, pairing_state_t *state)
 {
     ESP_LOGI(TAG,
-             "FAKE EDHOC APP RX: type=%s seq=%u state=%s payload=\"%.*s\"",
+             "EDHOC TRACE STATE RX: type=%s seq=%u state=%s payload_len=%u",
              edhoc_transport_type_str(msg->type),
              (unsigned)msg->seq,
              pairing_state_str(*state),
-             (int)msg->payload_len,
-             (const char *)msg->payload);
+             (unsigned)msg->payload_len);
 
-    if (msg->session_id != FAKE_EDHOC_SESSION_ID) {
-        ESP_LOGW(TAG, "Ignoring message for unexpected session: got=0x%04X expected=0x%04X",
-                 (unsigned)msg->session_id,
-                 (unsigned)FAKE_EDHOC_SESSION_ID);
+    if (!verify_received_trace(msg)) {
+        *state = PAIR_STATE_FAILED;
+        ESP_LOGW(TAG, "Pairing state -> %s", pairing_state_str(*state));
         return;
     }
 
 #if DEVICE_IS_INITIATOR
     if (*state == PAIR_STATE_WAIT_M2 && msg->type == EDHOC_TRANSPORT_MSG_M2) {
-        ESP_LOGI(TAG, "Fake EDHOC message_2 accepted; sending fake message_3");
-        ESP_ERROR_CHECK(send_fake_edhoc_message(EDHOC_TRANSPORT_MSG_M3, msg->seq + 1, "FAKE_EDHOC_MESSAGE_3 from initiator"));
+        ESP_LOGI(TAG, "RFC 9529 EDHOC message_2 accepted; sending message_3 trace bytes");
+        ESP_ERROR_CHECK(send_edhoc_trace_message(EDHOC_TRANSPORT_MSG_M3, msg->seq + 1));
         *state = PAIR_STATE_WAIT_ACK;
         ESP_LOGI(TAG, "Pairing state -> %s", pairing_state_str(*state));
         return;
@@ -141,32 +163,32 @@ static void handle_fake_edhoc_message(const edhoc_transport_msg_t *msg, pairing_
     if (*state == PAIR_STATE_WAIT_ACK && msg->type == EDHOC_TRANSPORT_MSG_ACK) {
         *state = PAIR_STATE_COMPLETE;
         ESP_LOGI(TAG, "Pairing state -> %s", pairing_state_str(*state));
-        ESP_LOGI(TAG, "Milestone 3 PASS: fake EDHOC M1/M2/M3 transport exchange completed");
+        ESP_LOGI(TAG, "Milestone 4 PASS: RFC 9529 EDHOC message_1/message_2/message_3 bytes transported over ESP-NOW");
         return;
     }
 
-    ESP_LOGW(TAG, "Unexpected fake EDHOC message for initiator: state=%s type=%s",
+    ESP_LOGW(TAG, "Unexpected EDHOC trace message for initiator: state=%s type=%s",
              pairing_state_str(*state),
              edhoc_transport_type_str(msg->type));
 #else
     if (*state == PAIR_STATE_WAIT_M1 && msg->type == EDHOC_TRANSPORT_MSG_M1) {
-        ESP_LOGI(TAG, "Fake EDHOC message_1 accepted; sending fake message_2");
-        ESP_ERROR_CHECK(send_fake_edhoc_message(EDHOC_TRANSPORT_MSG_M2, msg->seq + 1, "FAKE_EDHOC_MESSAGE_2 from responder"));
+        ESP_LOGI(TAG, "RFC 9529 EDHOC message_1 accepted; sending message_2 trace bytes");
+        ESP_ERROR_CHECK(send_edhoc_trace_message(EDHOC_TRANSPORT_MSG_M2, msg->seq + 1));
         *state = PAIR_STATE_WAIT_M3;
         ESP_LOGI(TAG, "Pairing state -> %s", pairing_state_str(*state));
         return;
     }
 
     if (*state == PAIR_STATE_WAIT_M3 && msg->type == EDHOC_TRANSPORT_MSG_M3) {
-        ESP_LOGI(TAG, "Fake EDHOC message_3 accepted; fake handshake complete on responder");
-        ESP_ERROR_CHECK(send_fake_edhoc_message(EDHOC_TRANSPORT_MSG_ACK, msg->seq + 1, "FAKE_EDHOC_DONE from responder"));
+        ESP_LOGI(TAG, "RFC 9529 EDHOC message_3 accepted; trace handshake transport complete on responder");
+        ESP_ERROR_CHECK(send_edhoc_trace_message(EDHOC_TRANSPORT_MSG_ACK, msg->seq + 1));
         *state = PAIR_STATE_COMPLETE;
         ESP_LOGI(TAG, "Pairing state -> %s", pairing_state_str(*state));
-        ESP_LOGI(TAG, "Milestone 3 PASS: responder processed fake EDHOC M1/M2/M3");
+        ESP_LOGI(TAG, "Milestone 4 PASS: responder processed RFC 9529 EDHOC message_1/message_2/message_3 bytes");
         return;
     }
 
-    ESP_LOGW(TAG, "Unexpected fake EDHOC message for responder: state=%s type=%s",
+    ESP_LOGW(TAG, "Unexpected EDHOC trace message for responder: state=%s type=%s",
              pairing_state_str(*state),
              edhoc_transport_type_str(msg->type));
 #endif
@@ -188,9 +210,9 @@ static void app_task(void *arg)
 
     while (true) {
 #if DEVICE_IS_INITIATOR
-        if (!initiator_started && (xTaskGetTickCount() - boot_tick) >= pdMS_TO_TICKS(FAKE_EDHOC_START_DELAY_MS)) {
-            ESP_LOGI(TAG, "Starting fake EDHOC transport exchange");
-            ESP_ERROR_CHECK(send_fake_edhoc_message(EDHOC_TRANSPORT_MSG_M1, 1, "FAKE_EDHOC_MESSAGE_1 from initiator"));
+        if (!initiator_started && (xTaskGetTickCount() - boot_tick) >= pdMS_TO_TICKS(EDHOC_TRACE_START_DELAY_MS)) {
+            ESP_LOGI(TAG, "Starting RFC 9529 EDHOC trace transport exchange");
+            ESP_ERROR_CHECK(send_edhoc_trace_message(EDHOC_TRANSPORT_MSG_M1, 1));
             state = PAIR_STATE_WAIT_M2;
             initiator_started = true;
             ESP_LOGI(TAG, "Pairing state -> %s", pairing_state_str(state));
@@ -201,7 +223,7 @@ static void app_task(void *arg)
         if (espnow_transport_recv(&rx, pdMS_TO_TICKS(100))) {
             edhoc_transport_msg_t msg = {0};
             if (edhoc_transport_parse_rx(&rx, &msg)) {
-                handle_fake_edhoc_message(&msg, &state);
+                handle_edhoc_trace_message(&msg, &state);
             }
         }
     }
@@ -215,8 +237,8 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_read_mac(own_mac, ESP_MAC_WIFI_STA));
 
     ESP_LOGI(TAG, "========================================");
-    ESP_LOGI(TAG, "EDHOC ESP-NOW thesis demo - Milestone 3");
-    ESP_LOGI(TAG, "Goal: fake EDHOC M1/M2/M3 transport over ESP-NOW");
+    ESP_LOGI(TAG, "EDHOC ESP-NOW thesis demo - Milestone 4");
+    ESP_LOGI(TAG, "Goal: RFC 9529 EDHOC M1/M2/M3 trace bytes over ESP-NOW");
 #if DEVICE_IS_INITIATOR
     ESP_LOGI(TAG, "Role: INITIATOR");
 #else
@@ -224,7 +246,8 @@ void app_main(void)
 #endif
     ESP_LOGI(TAG, "Channel: %d", ESPNOW_CHANNEL);
     ESP_LOGI(TAG, "Security mode: %s", security_mode_str());
-    ESP_LOGI(TAG, "Fake EDHOC session ID: 0x%04X", FAKE_EDHOC_SESSION_ID);
+    ESP_LOGI(TAG, "EDHOC trace source: %s", EDHOC_TRACE_RFC9529_SECTION);
+    ESP_LOGI(TAG, "EDHOC transport session ID: 0x%04X", EDHOC_TRACE_SESSION_ID);
     espnow_transport_print_mac("Own STA MAC", own_mac);
     espnow_transport_print_mac("Configured peer MAC", PEER_MAC);
     ESP_LOGI(TAG, "========================================");
@@ -240,11 +263,11 @@ void app_main(void)
     }
 
 #if ESPNOW_STATIC_ENCRYPTION_ENABLED
-    ESP_LOGW(TAG, "Static encryption is enabled; Milestone 3 normally expects unencrypted pre-key transport");
+    ESP_LOGW(TAG, "Static encryption is enabled; Milestone 4 normally expects unencrypted pre-key EDHOC transport");
     ESP_ERROR_CHECK(key_manager_enable_static_espnow_encryption(PEER_MAC));
 #else
     ESP_ERROR_CHECK(espnow_transport_add_peer(PEER_MAC, false, NULL));
 #endif
 
-    xTaskCreate(app_task, "milestone3_app", 4096, NULL, 4, NULL);
+    xTaskCreate(app_task, "milestone4_app", 4096, NULL, 4, NULL);
 }
