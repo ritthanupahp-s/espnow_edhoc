@@ -1,9 +1,8 @@
-#include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
 
 #include "device_config.h"
+#include "edhoc_transport.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_now.h"
@@ -14,32 +13,49 @@
 #include "key_manager.h"
 #include "nvs_flash.h"
 
-static const char *TAG = "milestone2";
-
-#define APP_MAGIC 0xA7
-#define APP_VERSION 1
+static const char *TAG = "milestone3";
 
 typedef enum {
-    APP_MSG_PING = 1,
-    APP_MSG_PONG = 2,
-} app_msg_type_t;
-
-typedef struct __attribute__((packed)) {
-    uint8_t magic;
-    uint8_t version;
-    uint8_t type;
-    uint16_t seq;
-    uint16_t payload_len;
-    uint8_t payload[APP_PAYLOAD_MAX_LEN];
-} app_packet_t;
+    PAIR_STATE_IDLE = 0,
+    PAIR_STATE_WAIT_M1,
+    PAIR_STATE_WAIT_M2,
+    PAIR_STATE_WAIT_M3,
+    PAIR_STATE_WAIT_ACK,
+    PAIR_STATE_COMPLETE,
+    PAIR_STATE_FAILED,
+} pairing_state_t;
 
 static const char *security_mode_str(void)
 {
-#if ESPNOW_STATIC_ENCRYPTION_ENABLED
+#if FAKE_EDHOC_TRANSPORT_ENABLED
+    return "unencrypted-fake-edhoc-transport";
+#elif ESPNOW_STATIC_ENCRYPTION_ENABLED
     return "static-lmk-encrypted";
 #else
     return "unencrypted";
 #endif
+}
+
+static const char *pairing_state_str(pairing_state_t state)
+{
+    switch (state) {
+    case PAIR_STATE_IDLE:
+        return "IDLE";
+    case PAIR_STATE_WAIT_M1:
+        return "WAIT_M1";
+    case PAIR_STATE_WAIT_M2:
+        return "WAIT_M2";
+    case PAIR_STATE_WAIT_M3:
+        return "WAIT_M3";
+    case PAIR_STATE_WAIT_ACK:
+        return "WAIT_ACK";
+    case PAIR_STATE_COMPLETE:
+        return "COMPLETE";
+    case PAIR_STATE_FAILED:
+        return "FAILED";
+    default:
+        return "UNKNOWN";
+    }
 }
 
 static bool mac_is_all_value(const uint8_t mac[ESP_NOW_ETH_ALEN], uint8_t value)
@@ -76,102 +92,117 @@ static esp_err_t nvs_init(void)
     return ret;
 }
 
-static esp_err_t send_app_message(app_msg_type_t type, uint16_t seq, const char *text)
+static esp_err_t send_fake_edhoc_message(edhoc_transport_msg_type_t type, uint16_t seq, const char *payload)
 {
-    app_packet_t packet = {0};
-    packet.magic = APP_MAGIC;
-    packet.version = APP_VERSION;
-    packet.type = (uint8_t)type;
-    packet.seq = seq;
-
-    size_t text_len = strnlen(text, APP_PAYLOAD_MAX_LEN);
-    packet.payload_len = (uint16_t)text_len;
-    memcpy(packet.payload, text, text_len);
-
-    size_t wire_len = offsetof(app_packet_t, payload) + text_len;
+    const size_t payload_len = strlen(payload);
 
     ESP_LOGI(TAG,
-             "APP TX: mode=%s type=%s seq=%u payload=\"%.*s\" wire_len=%u",
-             security_mode_str(),
-             type == APP_MSG_PING ? "PING" : "PONG",
+             "FAKE EDHOC APP TX: type=%s seq=%u payload=\"%s\"",
+             edhoc_transport_type_str(type),
              (unsigned)seq,
-             (int)text_len,
-             text,
-             (unsigned)wire_len);
+             payload);
 
-    return espnow_transport_send(PEER_MAC, &packet, wire_len);
+    return edhoc_transport_send(
+        PEER_MAC,
+        type,
+        FAKE_EDHOC_SESSION_ID,
+        seq,
+        (const uint8_t *)payload,
+        payload_len
+    );
 }
 
-static void handle_rx_packet(const espnow_rx_packet_t *rx)
+static void handle_fake_edhoc_message(const edhoc_transport_msg_t *msg, pairing_state_t *state)
 {
-    if (rx->data_len < (int)offsetof(app_packet_t, payload)) {
-        ESP_LOGW(TAG, "APP RX: packet too short len=%d", rx->data_len);
-        return;
-    }
-
-    const app_packet_t *packet = (const app_packet_t *)rx->data;
-
-    if (packet->magic != APP_MAGIC || packet->version != APP_VERSION) {
-        ESP_LOGW(TAG, "APP RX: invalid magic/version from " MACSTR, MAC2STR(rx->src_mac));
-        return;
-    }
-
-    size_t header_len = offsetof(app_packet_t, payload);
-    if (packet->payload_len > APP_PAYLOAD_MAX_LEN || header_len + packet->payload_len > (size_t)rx->data_len) {
-        ESP_LOGW(TAG, "APP RX: invalid payload length=%u wire_len=%d", (unsigned)packet->payload_len, rx->data_len);
-        return;
-    }
-
-    const char *type_str = packet->type == APP_MSG_PING ? "PING" :
-                           packet->type == APP_MSG_PONG ? "PONG" : "UNKNOWN";
-
     ESP_LOGI(TAG,
-             "APP RX: mode=%s from=" MACSTR " type=%s seq=%u payload=\"%.*s\" wire_len=%d",
-             security_mode_str(),
-             MAC2STR(rx->src_mac),
-             type_str,
-             (unsigned)packet->seq,
-             (int)packet->payload_len,
-             (const char *)packet->payload,
-             rx->data_len);
+             "FAKE EDHOC APP RX: type=%s seq=%u state=%s payload=\"%.*s\"",
+             edhoc_transport_type_str(msg->type),
+             (unsigned)msg->seq,
+             pairing_state_str(*state),
+             (int)msg->payload_len,
+             (const char *)msg->payload);
+
+    if (msg->session_id != FAKE_EDHOC_SESSION_ID) {
+        ESP_LOGW(TAG, "Ignoring message for unexpected session: got=0x%04X expected=0x%04X",
+                 (unsigned)msg->session_id,
+                 (unsigned)FAKE_EDHOC_SESSION_ID);
+        return;
+    }
 
 #if DEVICE_IS_INITIATOR
-    if (packet->type == APP_MSG_PONG) {
-#if ESPNOW_STATIC_ENCRYPTION_ENABLED
-        ESP_LOGI(TAG, "Milestone 2 PASS: received PONG using static encrypted ESP-NOW for seq=%u", (unsigned)packet->seq);
-#else
-        ESP_LOGI(TAG, "Milestone 1 PASS: received PONG for seq=%u", (unsigned)packet->seq);
-#endif
+    if (*state == PAIR_STATE_WAIT_M2 && msg->type == EDHOC_TRANSPORT_MSG_M2) {
+        ESP_LOGI(TAG, "Fake EDHOC message_2 accepted; sending fake message_3");
+        ESP_ERROR_CHECK(send_fake_edhoc_message(EDHOC_TRANSPORT_MSG_M3, msg->seq + 1, "FAKE_EDHOC_MESSAGE_3 from initiator"));
+        *state = PAIR_STATE_WAIT_ACK;
+        ESP_LOGI(TAG, "Pairing state -> %s", pairing_state_str(*state));
+        return;
     }
-#else
-    if (packet->type == APP_MSG_PING) {
-        ESP_ERROR_CHECK(send_app_message(APP_MSG_PONG, packet->seq, "static-lmk encrypted ack from responder"));
+
+    if (*state == PAIR_STATE_WAIT_ACK && msg->type == EDHOC_TRANSPORT_MSG_ACK) {
+        *state = PAIR_STATE_COMPLETE;
+        ESP_LOGI(TAG, "Pairing state -> %s", pairing_state_str(*state));
+        ESP_LOGI(TAG, "Milestone 3 PASS: fake EDHOC M1/M2/M3 transport exchange completed");
+        return;
     }
+
+    ESP_LOGW(TAG, "Unexpected fake EDHOC message for initiator: state=%s type=%s",
+             pairing_state_str(*state),
+             edhoc_transport_type_str(msg->type));
+#else
+    if (*state == PAIR_STATE_WAIT_M1 && msg->type == EDHOC_TRANSPORT_MSG_M1) {
+        ESP_LOGI(TAG, "Fake EDHOC message_1 accepted; sending fake message_2");
+        ESP_ERROR_CHECK(send_fake_edhoc_message(EDHOC_TRANSPORT_MSG_M2, msg->seq + 1, "FAKE_EDHOC_MESSAGE_2 from responder"));
+        *state = PAIR_STATE_WAIT_M3;
+        ESP_LOGI(TAG, "Pairing state -> %s", pairing_state_str(*state));
+        return;
+    }
+
+    if (*state == PAIR_STATE_WAIT_M3 && msg->type == EDHOC_TRANSPORT_MSG_M3) {
+        ESP_LOGI(TAG, "Fake EDHOC message_3 accepted; fake handshake complete on responder");
+        ESP_ERROR_CHECK(send_fake_edhoc_message(EDHOC_TRANSPORT_MSG_ACK, msg->seq + 1, "FAKE_EDHOC_DONE from responder"));
+        *state = PAIR_STATE_COMPLETE;
+        ESP_LOGI(TAG, "Pairing state -> %s", pairing_state_str(*state));
+        ESP_LOGI(TAG, "Milestone 3 PASS: responder processed fake EDHOC M1/M2/M3");
+        return;
+    }
+
+    ESP_LOGW(TAG, "Unexpected fake EDHOC message for responder: state=%s type=%s",
+             pairing_state_str(*state),
+             edhoc_transport_type_str(msg->type));
 #endif
 }
 
 static void app_task(void *arg)
 {
-    uint16_t seq = 1;
-    TickType_t last_ping_tick = xTaskGetTickCount();
+    pairing_state_t state;
+    bool initiator_started = false;
+    TickType_t boot_tick = xTaskGetTickCount();
 
-    ESP_LOGI(TAG, "App task started, security_mode=%s", security_mode_str());
+#if DEVICE_IS_INITIATOR
+    state = PAIR_STATE_IDLE;
+#else
+    state = PAIR_STATE_WAIT_M1;
+#endif
+
+    ESP_LOGI(TAG, "App task started, security_mode=%s state=%s", security_mode_str(), pairing_state_str(state));
 
     while (true) {
 #if DEVICE_IS_INITIATOR
-        TickType_t now = xTaskGetTickCount();
-        if ((now - last_ping_tick) >= pdMS_TO_TICKS(PING_INTERVAL_MS)) {
-            esp_err_t err = send_app_message(APP_MSG_PING, seq++, "static-lmk encrypted hello from initiator");
-            if (err != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to send PING: %s", esp_err_to_name(err));
-            }
-            last_ping_tick = now;
+        if (!initiator_started && (xTaskGetTickCount() - boot_tick) >= pdMS_TO_TICKS(FAKE_EDHOC_START_DELAY_MS)) {
+            ESP_LOGI(TAG, "Starting fake EDHOC transport exchange");
+            ESP_ERROR_CHECK(send_fake_edhoc_message(EDHOC_TRANSPORT_MSG_M1, 1, "FAKE_EDHOC_MESSAGE_1 from initiator"));
+            state = PAIR_STATE_WAIT_M2;
+            initiator_started = true;
+            ESP_LOGI(TAG, "Pairing state -> %s", pairing_state_str(state));
         }
 #endif
 
         espnow_rx_packet_t rx = {0};
         if (espnow_transport_recv(&rx, pdMS_TO_TICKS(100))) {
-            handle_rx_packet(&rx);
+            edhoc_transport_msg_t msg = {0};
+            if (edhoc_transport_parse_rx(&rx, &msg)) {
+                handle_fake_edhoc_message(&msg, &state);
+            }
         }
     }
 }
@@ -184,12 +215,8 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_read_mac(own_mac, ESP_MAC_WIFI_STA));
 
     ESP_LOGI(TAG, "========================================");
-#if ESPNOW_STATIC_ENCRYPTION_ENABLED
-    ESP_LOGI(TAG, "EDHOC ESP-NOW thesis demo - Milestone 2");
-    ESP_LOGI(TAG, "Goal: static encrypted ESP-NOW unicast using manual LMK");
-#else
-    ESP_LOGI(TAG, "EDHOC ESP-NOW thesis demo - Milestone 1 compatibility mode");
-#endif
+    ESP_LOGI(TAG, "EDHOC ESP-NOW thesis demo - Milestone 3");
+    ESP_LOGI(TAG, "Goal: fake EDHOC M1/M2/M3 transport over ESP-NOW");
 #if DEVICE_IS_INITIATOR
     ESP_LOGI(TAG, "Role: INITIATOR");
 #else
@@ -197,6 +224,7 @@ void app_main(void)
 #endif
     ESP_LOGI(TAG, "Channel: %d", ESPNOW_CHANNEL);
     ESP_LOGI(TAG, "Security mode: %s", security_mode_str());
+    ESP_LOGI(TAG, "Fake EDHOC session ID: 0x%04X", FAKE_EDHOC_SESSION_ID);
     espnow_transport_print_mac("Own STA MAC", own_mac);
     espnow_transport_print_mac("Configured peer MAC", PEER_MAC);
     ESP_LOGI(TAG, "========================================");
@@ -212,10 +240,11 @@ void app_main(void)
     }
 
 #if ESPNOW_STATIC_ENCRYPTION_ENABLED
+    ESP_LOGW(TAG, "Static encryption is enabled; Milestone 3 normally expects unencrypted pre-key transport");
     ESP_ERROR_CHECK(key_manager_enable_static_espnow_encryption(PEER_MAC));
 #else
     ESP_ERROR_CHECK(espnow_transport_add_peer(PEER_MAC, false, NULL));
 #endif
 
-    xTaskCreate(app_task, "milestone_app", 4096, NULL, 4, NULL);
+    xTaskCreate(app_task, "milestone3_app", 4096, NULL, 4, NULL);
 }
