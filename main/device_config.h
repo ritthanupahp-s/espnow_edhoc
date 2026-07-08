@@ -3,30 +3,36 @@
 #include <stdint.h>
 
 /*
- * Milestone 2 configuration
+ * Milestone 3 configuration
  * -------------------------
  * Flash one board with DEVICE_IS_INITIATOR = 1.
  * Flash the other board with DEVICE_IS_INITIATOR = 0.
  *
  * PEER_MAC must be the other ESP32 board's printed STA MAC address.
  *
- * This milestone enables ESP-NOW unicast encryption using a manually configured
- * static PMK + static LMK. Later, Milestone 5/6 will replace STATIC_LMK with an
- * EDHOC exporter-derived LMK.
+ * Milestone 3 sends fake EDHOC message_1/message_2/message_3 payloads over an
+ * EDHOC-style ESP-NOW transport frame. This active test uses unencrypted
+ * ESP-NOW because real EDHOC will run before the dynamic LMK exists.
  */
 #define DEVICE_IS_INITIATOR 1
 
 /* Both ESP32 boards must use the same Wi-Fi channel. */
 #define ESPNOW_CHANNEL 1
 
-/* Initiator sends one ping every 2 seconds. */
-#define PING_INTERVAL_MS 2000
+/* Initiator starts the fake EDHOC exchange once after this delay. */
+#define FAKE_EDHOC_START_DELAY_MS 2000
 
 /* Keep payloads small for the first prototype. ESP-NOW v1 safe limit is 250 bytes. */
 #define APP_PAYLOAD_MAX_LEN 64
 
-/* Set to 1 for Milestone 2. Set to 0 only if you want to re-run Milestone 1. */
-#define ESPNOW_STATIC_ENCRYPTION_ENABLED 1
+/* Active Milestone 3 mode: fake EDHOC transport over unencrypted ESP-NOW. */
+#define FAKE_EDHOC_TRANSPORT_ENABLED 1
+
+/* Keep Milestone 2 control keys in the repo, but disable static encryption for Milestone 3. */
+#define ESPNOW_STATIC_ENCRYPTION_ENABLED 0
+
+/* One fixed fake EDHOC session ID for the two-board prototype. */
+#define FAKE_EDHOC_SESSION_ID 0x1234
 
 /*
  * ESP-NOW PMK and LMK are both 16 bytes.
@@ -34,6 +40,8 @@
  *
  * PMK: Primary Master Key, used by ESP-NOW to protect LMKs internally.
  * LMK: Local Master Key, installed per peer for encrypted unicast frames.
+ *
+ * Milestone 2 uses these. Milestone 3 leaves them unused.
  */
 static const uint8_t ESPNOW_STATIC_PMK[16] = {
     0x10, 0x11, 0x12, 0x13,
