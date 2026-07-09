@@ -1,6 +1,8 @@
 #include <stdint.h>
+#include <string.h>
 
 #include "device_config.h"
+#include "edhoc_exporter.h"
 #include "edhoc_trace_vectors.h"
 #include "edhoc_transport.h"
 #include "esp_log.h"
@@ -13,7 +15,7 @@
 #include "key_manager.h"
 #include "nvs_flash.h"
 
-static const char *TAG = "milestone4";
+static const char *TAG = "milestone5";
 
 typedef enum {
     PAIR_STATE_IDLE = 0,
@@ -28,7 +30,7 @@ typedef enum {
 static const char *security_mode_str(void)
 {
 #if EDHOC_TRACE_TRANSPORT_ENABLED
-    return "unencrypted-rfc9529-edhoc-trace";
+    return "unencrypted-rfc9529-edhoc-trace-plus-lmk-scaffold";
 #elif FAKE_EDHOC_TRANSPORT_ENABLED
     return "unencrypted-fake-edhoc-transport";
 #elif ESPNOW_STATIC_ENCRYPTION_ENABLED
@@ -92,6 +94,20 @@ static esp_err_t nvs_init(void)
         ret = nvs_flash_init();
     }
     return ret;
+}
+
+static void derive_and_log_lmk_candidate(void)
+{
+    uint8_t lmk[ESPNOW_LMK_LEN] = {0};
+
+    esp_err_t err = edhoc_exporter_trace_derive_espnow_lmk(lmk);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to derive trace-only LMK candidate: %s", esp_err_to_name(err));
+        return;
+    }
+
+    edhoc_exporter_log_lmk_summary(lmk);
+    memset(lmk, 0, sizeof(lmk));
 }
 
 static esp_err_t send_edhoc_trace_message(edhoc_transport_msg_type_t type, uint16_t seq)
@@ -163,7 +179,8 @@ static void handle_edhoc_trace_message(const edhoc_transport_msg_t *msg, pairing
     if (*state == PAIR_STATE_WAIT_ACK && msg->type == EDHOC_TRANSPORT_MSG_ACK) {
         *state = PAIR_STATE_COMPLETE;
         ESP_LOGI(TAG, "Pairing state -> %s", pairing_state_str(*state));
-        ESP_LOGI(TAG, "Milestone 4 PASS: RFC 9529 EDHOC message_1/message_2/message_3 bytes transported over ESP-NOW");
+        derive_and_log_lmk_candidate();
+        ESP_LOGI(TAG, "Milestone 5 PASS: 16-byte ESP-NOW LMK candidate derived after EDHOC trace transport");
         return;
     }
 
@@ -184,7 +201,8 @@ static void handle_edhoc_trace_message(const edhoc_transport_msg_t *msg, pairing
         ESP_ERROR_CHECK(send_edhoc_trace_message(EDHOC_TRANSPORT_MSG_ACK, msg->seq + 1));
         *state = PAIR_STATE_COMPLETE;
         ESP_LOGI(TAG, "Pairing state -> %s", pairing_state_str(*state));
-        ESP_LOGI(TAG, "Milestone 4 PASS: responder processed RFC 9529 EDHOC message_1/message_2/message_3 bytes");
+        derive_and_log_lmk_candidate();
+        ESP_LOGI(TAG, "Milestone 5 PASS: responder derived matching 16-byte ESP-NOW LMK candidate");
         return;
     }
 
@@ -237,8 +255,9 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_read_mac(own_mac, ESP_MAC_WIFI_STA));
 
     ESP_LOGI(TAG, "========================================");
-    ESP_LOGI(TAG, "EDHOC ESP-NOW thesis demo - Milestone 4");
-    ESP_LOGI(TAG, "Goal: RFC 9529 EDHOC M1/M2/M3 trace bytes over ESP-NOW");
+    ESP_LOGI(TAG, "EDHOC ESP-NOW thesis demo - Milestone 5");
+    ESP_LOGI(TAG, "Goal: derive 16-byte ESP-NOW LMK candidate after EDHOC transport");
+    ESP_LOGW(TAG, "Current derivation is trace-only; Lakers edhoc_exporter() is the next integration target");
 #if DEVICE_IS_INITIATOR
     ESP_LOGI(TAG, "Role: INITIATOR");
 #else
@@ -263,11 +282,11 @@ void app_main(void)
     }
 
 #if ESPNOW_STATIC_ENCRYPTION_ENABLED
-    ESP_LOGW(TAG, "Static encryption is enabled; Milestone 4 normally expects unencrypted pre-key EDHOC transport");
+    ESP_LOGW(TAG, "Static encryption is enabled; Milestone 5 normally expects unencrypted pre-key EDHOC transport");
     ESP_ERROR_CHECK(key_manager_enable_static_espnow_encryption(PEER_MAC));
 #else
     ESP_ERROR_CHECK(espnow_transport_add_peer(PEER_MAC, false, NULL));
 #endif
 
-    xTaskCreate(app_task, "milestone4_app", 4096, NULL, 4, NULL);
+    xTaskCreate(app_task, "milestone5_app", 4096, NULL, 4, NULL);
 }
