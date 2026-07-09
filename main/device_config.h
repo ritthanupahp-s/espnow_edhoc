@@ -3,19 +3,20 @@
 #include <stdint.h>
 
 /*
- * Milestone 4 configuration
+ * Milestone 5 configuration
  * -------------------------
  * Flash one board with DEVICE_IS_INITIATOR = 1.
  * Flash the other board with DEVICE_IS_INITIATOR = 0.
  *
  * PEER_MAC must be the other ESP32 board's printed STA MAC address.
  *
- * Milestone 4 transports real EDHOC message_1/message_2/message_3 byte strings
- * from RFC 9529 Section 3 over the ESP-NOW EDHOC transport frame.
+ * Milestone 5 still transports RFC 9529 EDHOC message_1/message_2/message_3
+ * bytes over the ESP-NOW EDHOC transport frame. After the trace exchange
+ * completes, both boards derive a deterministic 16-byte LMK candidate.
  *
- * This is still a transport milestone, not the final live cryptographic EDHOC
- * library integration. The next step is to replace these RFC trace vectors with
- * messages composed and processed by libedhoc.
+ * Important: this is a trace-only LMK derivation scaffold, not a real EDHOC
+ * exporter result yet. The next step is to replace the trace-only derivation
+ * with Lakers' completed-session edhoc_exporter().
  */
 #define DEVICE_IS_INITIATOR 1
 
@@ -28,13 +29,13 @@
 /* Keep payloads small for the first prototype. ESP-NOW v1 safe limit is 250 bytes. */
 #define APP_PAYLOAD_MAX_LEN 64
 
-/* Active Milestone 4 mode: RFC 9529 EDHOC trace bytes over unencrypted ESP-NOW. */
+/* Active Milestone 5 mode: RFC 9529 EDHOC trace + trace-only LMK scaffold. */
 #define EDHOC_TRACE_TRANSPORT_ENABLED 1
 
-/* Milestone 3 fake string mode is now disabled. */
+/* Milestone 3 fake string mode is disabled. */
 #define FAKE_EDHOC_TRANSPORT_ENABLED 0
 
-/* Keep Milestone 2 control keys in the repo, but disable static encryption for Milestone 4. */
+/* Keep Milestone 2 control keys in the repo, but disable static encryption for Milestone 5. */
 #define ESPNOW_STATIC_ENCRYPTION_ENABLED 0
 
 /* One fixed EDHOC transport session ID for the two-board prototype. */
@@ -47,7 +48,7 @@
  * PMK: Primary Master Key, used by ESP-NOW to protect LMKs internally.
  * LMK: Local Master Key, installed per peer for encrypted unicast frames.
  *
- * Milestone 2 uses these. Milestone 4 leaves them unused.
+ * Milestone 2 uses these. Milestone 5 leaves them unused.
  */
 static const uint8_t ESPNOW_STATIC_PMK[16] = {
     0x10, 0x11, 0x12, 0x13,
