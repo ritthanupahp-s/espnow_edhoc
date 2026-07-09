@@ -2,7 +2,7 @@
 
 This repository is being built incrementally for a thesis proof of concept.
 
-Current implementation: **Milestone 4 — RFC 9529 EDHOC message bytes over ESP-NOW**.
+Current implementation: **Milestone 5 — EDHOC trace transport plus 16-byte ESP-NOW LMK derivation scaffold**.
 
 ## Roadmap position
 
@@ -10,38 +10,62 @@ Current implementation: **Milestone 4 — RFC 9529 EDHOC message bytes over ESP-
 Milestone 1: minimal unencrypted ESP-NOW unicast ping/pong        DONE
 Milestone 2: static encrypted ESP-NOW with manual PMK + LMK       DONE
 Milestone 3: fake EDHOC transport over ESP-NOW                    DONE
-Milestone 4: real EDHOC trace messages over ESP-NOW               CURRENT
-Milestone 5: derive 16-byte LMK using EDHOC exporter              NEXT
-Milestone 6: install EDHOC-derived LMK into ESP-NOW peer table    LATER
+Milestone 4: real EDHOC trace messages over ESP-NOW               DONE
+Milestone 5: derive 16-byte LMK-shaped output after EDHOC flow    CURRENT
+Milestone 6: install EDHOC-derived LMK into ESP-NOW peer table    NEXT
 ```
 
-## Milestone 4 goal
+## Milestone 5 goal
 
-Prove that the ESP-NOW EDHOC transport can carry **actual EDHOC byte strings**, not just fake text payloads.
+Prepare the project for the EDHOC exporter step.
 
-This milestone uses the official EDHOC trace from **RFC 9529 Section 3: Static DH, CCS identified by `kid`**. The trace provides compact EDHOC messages with these sizes:
+After the RFC 9529 EDHOC message exchange completes, both boards now derive the same 16-byte ESP-NOW LMK-shaped value and print a safe hash summary.
+
+Important limitation:
 
 ```text
-message_1 = 39 bytes
-message_2 = 45 bytes
-message_3 = 19 bytes
+This milestone does not yet call the real Lakers edhoc_exporter().
+The current derivation is trace-only and must not be treated as secure key material.
 ```
 
-The ESP-NOW exchange is:
+The purpose is to create and test the C boundary where the future Lakers exporter result will be handed to ESP-NOW.
+
+## Lakers reference
+
+The intended EDHOC implementation is:
+
+```text
+https://github.com/lake-rs/lakers
+```
+
+Lakers is a Rust EDHOC implementation. Its README says it is `no_std`, optimized for microcontrollers, avoids heap allocations, has configurable crypto backends, provides C bindings, and currently supports STAT-STAT with Cipher Suite 2.
+
+See:
+
+```text
+docs/lakers_integration.md
+```
+
+for the integration plan.
+
+## Current Milestone 5 flow
 
 ```text
 ESP32 A -- unencrypted ESP-NOW: RFC9529 message_1 --> ESP32 B
 ESP32 A <-- unencrypted ESP-NOW: RFC9529 message_2 -- ESP32 B
 ESP32 A -- unencrypted ESP-NOW: RFC9529 message_3 --> ESP32 B
 ESP32 A <-- unencrypted ESP-NOW: small demo ACK     -- ESP32 B
+
+Both boards:
+RFC9529 transcript -> trace-only LMK scaffold -> 16-byte LMK candidate
 ```
 
-Important: this milestone transports and verifies real EDHOC trace bytes, but it does **not** yet run live EDHOC cryptographic compose/process functions. The next integration step is to replace the RFC trace vector module with a real EDHOC library such as `libedhoc`.
+Both boards should print the same `LMK summary` prefix.
 
 ## Files
 
 ```text
-main/main.c                    RFC 9529 EDHOC trace initiator/responder state machine
+main/main.c                    RFC 9529 trace state machine + LMK scaffold call
 main/device_config.h           Role, Wi-Fi channel, EDHOC trace session ID, peer MAC
 main/espnow_transport.c        Wi-Fi + ESP-NOW setup, callbacks, PMK setup, peer add, send, receive queue
 main/espnow_transport.h        Raw ESP-NOW transport interface
@@ -49,50 +73,37 @@ main/edhoc_transport.c         EDHOC-style frame serialization/parsing over ESP-
 main/edhoc_transport.h         EDHOC transport interface and message types
 main/edhoc_trace_vectors.c     RFC 9529 message_1/message_2/message_3 byte strings and verification
 main/edhoc_trace_vectors.h     RFC 9529 trace vector interface
+main/edhoc_exporter.c          Temporary trace-only LMK derivation scaffold
+main/edhoc_exporter.h          EDHOC exporter / ESP-NOW LMK interface
 main/key_manager.c             Milestone 2 static PMK/LMK helper, retained for later comparison
-main/key_manager.h             Key manager interface
+docs/lakers_integration.md     Lakers integration plan and API mapping
 ```
 
-## EDHOC-style transport frame
+## Why this milestone exists
 
-Milestone 4 still uses the transport frame created in Milestone 3:
+The final thesis goal requires this sequence:
 
 ```text
-magic | version | type | flags | session_id | seq | frag_idx | frag_count | payload_len | payload
+EDHOC complete
+    -> EDHOC exporter
+        -> 16-byte ESP-NOW LMK
+            -> install LMK in ESP-NOW peer table
+                -> encrypted post-handshake ESP-NOW unicast
 ```
 
-Current message types:
+Milestone 5 creates the boundary for:
 
-```text
-0x10 = EDHOC_M1
-0x11 = EDHOC_M2
-0x12 = EDHOC_M3
-0x13 = EDHOC_ACK
+```c
+esp_err_t edhoc_exporter_trace_derive_espnow_lmk(uint8_t out_lmk[16]);
 ```
 
-Fragment fields are already present, but Milestone 4 only sends one fragment:
+Later, this function should be replaced by a Lakers-backed function such as:
 
-```text
-frag_idx = 0
-frag_count = 1
+```c
+esp_err_t edhoc_lakers_export_espnow_lmk(uint8_t out_lmk[16]);
 ```
 
-## How Milestone 4 works
-
-1. Both boards initialize Wi-Fi STA mode on the same channel.
-2. Both boards initialize ESP-NOW.
-3. Each board adds the other board as an **unencrypted** unicast peer.
-4. Initiator waits `EDHOC_TRACE_START_DELAY_MS`.
-5. Initiator sends RFC 9529 EDHOC `message_1` bytes.
-6. Responder verifies `message_1` byte-for-byte against the stored RFC 9529 vector.
-7. Responder sends RFC 9529 EDHOC `message_2` bytes.
-8. Initiator verifies `message_2` byte-for-byte.
-9. Initiator sends RFC 9529 EDHOC `message_3` bytes.
-10. Responder verifies `message_3` byte-for-byte.
-11. Responder sends a small demo ACK.
-12. Initiator verifies the ACK and prints `Milestone 4 PASS`.
-
-## How to run Milestone 4
+## How to run Milestone 5
 
 ### 1. Configure Board A
 
@@ -143,45 +154,43 @@ idf.py -p COMx flash monitor
 Initiator:
 
 ```text
-EDHOC ESP-NOW thesis demo - Milestone 4
+EDHOC ESP-NOW thesis demo - Milestone 5
 Role: INITIATOR
-Security mode: unencrypted-rfc9529-edhoc-trace
-EDHOC trace source: RFC9529 Section 3 Static DH CCS/kid
-EDHOC transport session ID: 0x1234
-Adding peer 24:6F:28:AA:BB:CC encrypted=0
+Security mode: unencrypted-rfc9529-edhoc-trace-plus-lmk-scaffold
 Starting RFC 9529 EDHOC trace transport exchange
 EDHOC TRACE APP TX: type=EDHOC_M1 len=39 source=RFC9529 Section 3 Static DH CCS/kid
-EDHOC RX: from=24:6F:28:AA:BB:CC type=EDHOC_M2 session=0x1234 seq=2 frag=0/1 payload_len=45
 EDHOC TRACE APP RX verified: type=EDHOC_M2 len=45 source=RFC9529 Section 3 Static DH CCS/kid
 RFC 9529 EDHOC message_2 accepted; sending message_3 trace bytes
 EDHOC TRACE APP TX: type=EDHOC_M3 len=19 source=RFC9529 Section 3 Static DH CCS/kid
-EDHOC RX: from=24:6F:28:AA:BB:CC type=EDHOC_ACK session=0x1234 seq=4 frag=0/1 payload_len=16
-Milestone 4 PASS: RFC 9529 EDHOC message_1/message_2/message_3 bytes transported over ESP-NOW
+TRACE-ONLY LMK derivation active
+Derived trace-only ESP-NOW LMK candidate len=16 exporter_label=0xF0 context=ESP-NOW-LMK-v1 session=0x1234
+LMK summary: len=16 sha256_prefix=AA:BB:CC:DD
+Milestone 5 PASS: 16-byte ESP-NOW LMK candidate derived after EDHOC trace transport
 ```
 
 Responder:
 
 ```text
-EDHOC ESP-NOW thesis demo - Milestone 4
+EDHOC ESP-NOW thesis demo - Milestone 5
 Role: RESPONDER
-Security mode: unencrypted-rfc9529-edhoc-trace
-EDHOC trace source: RFC9529 Section 3 Static DH CCS/kid
-EDHOC transport session ID: 0x1234
-Adding peer 24:6F:28:11:22:33 encrypted=0
-EDHOC RX: from=24:6F:28:11:22:33 type=EDHOC_M1 session=0x1234 seq=1 frag=0/1 payload_len=39
+Security mode: unencrypted-rfc9529-edhoc-trace-plus-lmk-scaffold
 EDHOC TRACE APP RX verified: type=EDHOC_M1 len=39 source=RFC9529 Section 3 Static DH CCS/kid
 RFC 9529 EDHOC message_1 accepted; sending message_2 trace bytes
 EDHOC TRACE APP TX: type=EDHOC_M2 len=45 source=RFC9529 Section 3 Static DH CCS/kid
-EDHOC RX: from=24:6F:28:11:22:33 type=EDHOC_M3 session=0x1234 seq=3 frag=0/1 payload_len=19
 EDHOC TRACE APP RX verified: type=EDHOC_M3 len=19 source=RFC9529 Section 3 Static DH CCS/kid
-Milestone 4 PASS: responder processed RFC 9529 EDHOC message_1/message_2/message_3 bytes
+TRACE-ONLY LMK derivation active
+Derived trace-only ESP-NOW LMK candidate len=16 exporter_label=0xF0 context=ESP-NOW-LMK-v1 session=0x1234
+LMK summary: len=16 sha256_prefix=AA:BB:CC:DD
+Milestone 5 PASS: responder derived matching 16-byte ESP-NOW LMK candidate
 ```
+
+The exact `sha256_prefix` value is not important, but it should match on both boards.
 
 ## Important tests
 
 ### Test 1: normal flow
 
-Both boards should print `Milestone 4 PASS`.
+Both boards should print `Milestone 5 PASS` and the same LMK summary prefix.
 
 ### Test 2: wrong session ID
 
@@ -191,10 +200,8 @@ Expected result:
 
 ```text
 Ignoring message for unexpected session
-Milestone 4 PASS should not appear
+Milestone 5 PASS should not appear
 ```
-
-Then restore the same session ID on both boards.
 
 ### Test 3: corrupted EDHOC byte
 
@@ -205,16 +212,17 @@ Expected result:
 ```text
 bytes do not match RFC 9529 trace
 Pairing state -> FAILED
-Milestone 4 PASS should not appear
+Milestone 5 PASS should not appear
 ```
 
-Then restore the original byte.
+## Next milestone
 
-## Notes
+Milestone 6 should install the 16-byte value into the ESP-NOW peer table and switch to encrypted post-handshake ESP-NOW traffic.
 
-- Both boards must use the same `ESPNOW_CHANNEL`.
-- Both boards must use each other's correct STA MAC in `PEER_MAC`.
-- Milestone 4 intentionally uses unencrypted ESP-NOW because EDHOC is the pairing protocol that will later create the encrypted LMK.
-- Milestone 2 static PMK/LMK code remains in the repo as a control path for future comparison.
-- The RFC 9529 trace proves binary EDHOC messages fit inside the current ESP-NOW frame design.
-- The next step is live `libedhoc` integration: call `edhoc_message_1_compose`, process `message_2`, compose `message_3`, then use the EDHOC exporter for a 16-byte ESP-NOW LMK.
+However, before final thesis claims, replace the trace-only derivation with the real Lakers exporter:
+
+```text
+Lakers completed EDHOC session
+    -> edhoc_exporter(label, context, 16-byte output)
+    -> ESP-NOW LMK
+```
