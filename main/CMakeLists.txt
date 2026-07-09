@@ -4,12 +4,14 @@ idf_component_register(
         "espnow_transport.c"
         "edhoc_transport.c"
         "edhoc_trace_vectors.c"
+        "edhoc_exporter.c"
         "key_manager.c"
     PRIV_REQUIRES
         nvs_flash
         esp_event
         esp_netif
         esp_wifi
+        mbedtls
     INCLUDE_DIRS
         "."
 )
