@@ -9,7 +9,7 @@
 #include "freertos/FreeRTOS.h"
 
 #define ESPNOW_TRANSPORT_RX_QUEUE_LEN 10
-#define ESPNOW_TRANSPORT_MAX_PAYLOAD_LEN 200
+#define ESPNOW_TRANSPORT_MAX_PAYLOAD_LEN 250
 
 typedef struct {
     uint8_t src_mac[ESP_NOW_ETH_ALEN];
