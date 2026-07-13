@@ -40,6 +40,30 @@ rustup toolchain install stable
 rustup default stable
 ```
 
+## Dependency source
+
+The project pins both `lakers` and `lakers-crypto` to the same Lakers Git revision.
+The `lakers-crypto` dispatch crate is part of the Lakers workspace but is not
+published as a standalone crates.io package, so declaring
+`lakers-crypto = "0.8.0"` will fail.
+
+After updating an older local copy, run from the repository root:
+
+```bash
+git pull
+cd tools/lakers_reference
+cargo clean
+cargo run --release
+```
+
+If an old `Cargo.lock` was generated from the incorrect dependency declaration,
+remove it once before running Cargo again:
+
+```powershell
+Remove-Item Cargo.lock -ErrorAction SilentlyContinue
+cargo run --release
+```
+
 ## Run with default test identities
 
 From the repository root:
