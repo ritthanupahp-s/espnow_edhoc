@@ -1,10 +1,10 @@
 # EDHOC-Based Dynamic Pairing for ESP-NOW on ESP32
 
-This repository is being built incrementally for a thesis proof of concept.
+This repository is being built incrementally as a thesis proof of concept.
 
-Current implementation: **Milestone 7 — live Lakers EDHOC reference handshake and exporter on the host**.
+Current implementation: **Milestone 8 — ESP32 Rust/C FFI and Xtensa cross-compilation smoke test**.
 
-The ESP32 firmware remains at the completed Milestone 6 handover flow while the project establishes a verified live-EDHOC source of truth before adding the Rust/C ESP32 bridge.
+The existing ESP-NOW firmware still runs the completed Milestone 6 transport and encrypted handover flow. Milestone 8 adds a Rust static library to the same ESP-IDF application and proves that C code on the ESP32 can call Rust exports successfully.
 
 ## Roadmap position
 
@@ -15,259 +15,162 @@ Milestone 3: fake EDHOC transport over ESP-NOW                    DONE
 Milestone 4: RFC 9529 EDHOC trace messages over ESP-NOW           DONE
 Milestone 5: derive 16-byte LMK-shaped output after EDHOC flow    DONE
 Milestone 6: install derived LMK and test encrypted traffic       DONE
-Milestone 7: live Lakers handshake and exporter on host           CURRENT
-Milestone 8: build Lakers for ESP32 and connect it through FFI    NEXT
+Milestone 7: live Lakers handshake and exporter on host           DONE
+Milestone 8: ESP32 Rust/C FFI and Xtensa staticlib build          CURRENT
+Milestone 9: move live Lakers session state into ESP32 firmware   NEXT
 ```
 
-## Milestone 7 goal
+## Milestone 8 goal
 
-Run genuine EDHOC cryptographic processing with the selected reference implementation:
+Prove this complete build and runtime path before adding Lakers state:
 
 ```text
-https://github.com/lake-rs/lakers
+Rust no_std crate
+    -> cargo +esp
+        -> xtensa-esp32-none-elf static library
+            -> ESP-IDF CMake component
+                -> final ESP32 firmware
+                    -> C calls Rust function on device
 ```
 
-The host reference performs:
+The Milestone 8 Rust crate deliberately contains only two small exported functions. This isolates toolchain, linker, static-library, symbol, and C ABI problems from the much more complex EDHOC state machine.
+
+## New component
 
 ```text
-Initiator prepare_message_1
-Responder process_message_1
-Responder prepare_message_2
-Initiator parse_message_2
-Initiator verify_message_2
-Initiator prepare_message_3
-Responder parse_message_3
-Responder verify_message_3
-Both peers complete without message_4
-Both peers call edhoc_exporter
+components/lakers_ffi/
+├── CMakeLists.txt
+├── README.md
+├── include/
+│   └── lakers_ffi.h
+├── lakers_ffi_component.c
+└── rust/
+    ├── Cargo.toml
+    └── src/
+        └── lib.rs
 ```
 
-It proves:
+During `idf.py build`, the component runs:
 
 ```text
-initiator PRK_out == responder PRK_out
-initiator 16-byte LMK == responder 16-byte LMK
+cargo +esp build --target xtensa-esp32-none-elf --release
 ```
 
-Unlike Milestones 4–6, this path does not use stored RFC trace messages or the temporary SHA-256 transcript scaffold.
-
-## New host reference tool
+The generated archive is linked into the ESP-IDF application:
 
 ```text
-tools/lakers_reference/Cargo.toml
-tools/lakers_reference/src/main.rs
-tools/lakers_reference/README.md
+build/lakers-rust-target/xtensa-esp32-none-elf/release/liblakers_esp32_ffi.a
 ```
 
-A GitHub Actions workflow also builds and runs the reference:
+## Install the ESP32 Rust toolchain
+
+The normal stable Rust toolchain used by the Milestone 7 host reference is not enough for the original Xtensa ESP32.
+
+From PowerShell:
+
+```powershell
+cargo install espup --locked
+espup install --targets esp32
+```
+
+On Windows, current `espup` versions inject the environment variables automatically. Close and reopen VS Code and PowerShell after installation.
+
+Verify the installation:
+
+```powershell
+rustup toolchain list
+rustc +esp --version
+rustc +esp --print target-list | Select-String xtensa-esp32-none-elf
+```
+
+You should see the `esp` toolchain and the `xtensa-esp32-none-elf` target.
+
+## Build and flash
+
+Open an ESP-IDF terminal at the repository root:
+
+```powershell
+idf.py fullclean
+idf.py build
+idf.py -p COMx flash monitor
+```
+
+The Rust archive is built automatically as part of `idf.py build`; do not run a separate Cargo command inside the component.
+
+## Milestone 8 pass condition
+
+During early boot, the C component calls the Rust ABI and transform functions. The monitor must print:
 
 ```text
-.github/workflows/lakers-reference.yml
+Milestone 8 PASS: ESP-IDF C called Xtensa Rust staticlib abi=0x00080001 output=<value>
 ```
 
-## Run the live Lakers handshake
+If the ABI value or calculation differs, the component prints `Milestone 8 FAIL` and aborts rather than continuing with an unverified bridge.
 
-Install stable Rust, then run from the repository root:
+After the FFI pass line, the existing Milestone 6 application continues with:
 
-```bash
+```text
+unencrypted EDHOC-shaped exchange
+    -> shared 16-byte value
+        -> peer encrypt=true
+            -> encrypted KEY_TEST / KEY_TEST_ACK
+```
+
+## Milestone 7 host reference
+
+The genuine Lakers handshake and exporter reference remains under:
+
+```text
+tools/lakers_reference/
+```
+
+Run it with:
+
+```powershell
 cd tools/lakers_reference
-cargo run --release
-```
-
-The default run uses placeholder ESP-NOW identities:
-
-```text
-Initiator MAC: 02:00:00:00:00:01
-Responder MAC: 02:00:00:00:00:02
-Wi-Fi channel: 1
-```
-
-Run with the actual two ESP32 STA MAC addresses and channel:
-
-```bash
 cargo run --release -- <initiator-mac> <responder-mac> <channel>
 ```
 
-Example:
-
-```bash
-cargo run --release -- 24:6F:28:11:22:33 24:6F:28:AA:BB:CC 1
-```
-
-The MAC arguments must be ordered by EDHOC role:
-
-```text
-first argument  = initiator STA MAC
-second argument = responder STA MAC
-```
-
-## Exporter configuration
-
-Milestone 7 uses:
-
-```text
-Exporter label: 0xF0
-Output length: 16 bytes
-```
-
-The exporter context is:
-
-```text
-"ESP-NOW-LMK-v1"
-|| initiator STA MAC
-|| responder STA MAC
-|| Wi-Fi channel
-```
-
-The context length is 27 bytes:
-
-```text
-14-byte purpose + 6-byte initiator MAC + 6-byte responder MAC + 1-byte channel
-```
-
-The same byte ordering must be used later on both ESP32 devices.
-
-## Expected output
-
-The actual EDHOC messages and LMK change between runs because Lakers generates fresh ephemeral keys.
+Expected final output:
 
 ```text
 LAKERS_LIVE_HANDSHAKE=PASS
-authentication_method=STAT-STAT
-cipher_suite=2
-exporter_label=0xF0
-initiator_mac=24:6F:28:11:22:33
-responder_mac=24:6F:28:AA:BB:CC
-wifi_channel=1
-exporter_context_len=27
-exporter_context_hex=<context bytes>
-message_1_len=<generated length>
-message_1_hex=<live EDHOC message_1>
-message_2_len=<generated length>
-message_2_hex=<live EDHOC message_2>
-message_3_len=<generated length>
-message_3_hex=<live EDHOC message_3>
 espnow_lmk_len=16
-espnow_lmk_hex=<live Lakers exporter result>
 initiator_responder_lmk_match=true
 ```
 
-Run the automated tests with:
+## Why Lakers is not inside the bridge yet
 
-```bash
-cargo test
-```
+The upstream Lakers C wrapper currently assumes its own target and crypto-backend build paths. Milestone 8 first proves the project-specific ESP32 static-library pipeline using a dependency-free `no_std` crate.
 
-## Credentials used by the reference
-
-The host program uses the public test credentials and static authentication keys from the upstream Lakers embedded example.
-
-They are appropriate for interoperability and development testing only:
-
-```text
-Authentication method: STAT-STAT
-Cipher Suite: 2
-Credential transfer: by reference
-```
-
-Do not reuse the included private keys in a deployed system.
-
-## Relationship to the ESP32 firmware
-
-The ESP32 C firmware still demonstrates the complete transport and key handover mechanics:
-
-```text
-peer encrypt=false
-    -> EDHOC-shaped M1/M2/M3 transport
-        -> shared 16-byte value
-            -> esp_now_mod_peer(encrypt=true, LMK)
-                -> encrypted KEY_TEST / KEY_TEST_ACK
-```
-
-Milestone 7 now supplies the verified live Lakers logic that must replace these temporary firmware functions:
+Milestone 9 will place Lakers behind this already-tested C ABI and replace the temporary firmware functions:
 
 ```c
-edhoc_trace_get_message()
-edhoc_trace_verify_message()
-edhoc_exporter_trace_derive_espnow_lmk()
+edhoc_trace_get_message();
+edhoc_trace_verify_message();
+edhoc_exporter_trace_derive_espnow_lmk();
 ```
 
-The existing Milestone 6 ESP-NOW code should remain reusable:
+with live operations equivalent to:
 
 ```text
-edhoc_transport_send()
-espnow_transport_receive queue
-key_manager_enable_derived_espnow_encryption()
-KEY_TEST / KEY_TEST_ACK
-peer encrypt=false -> encrypt=true handover
+prepare/process/verify message_1
+prepare/process/verify message_2
+prepare/process/verify message_3
+completed_without_message_4
+edhoc_exporter(label=0xF0, context, output_len=16)
 ```
 
-## Why Lakers is not linked into ESP-IDF yet
-
-The project firmware is currently C, while Lakers is Rust.
-
-The upstream `lakers-c/build.sh` currently builds its static C library for Cortex-M4 targets or the host. It does not directly produce an Xtensa ESP32 library.
-
-Therefore, the next milestone must create and validate one of these bridges:
+## Milestone 8 acceptance checklist
 
 ```text
-A. Cross-compile a Lakers staticlib for the ESP32 Rust target and call it from C
-B. Add a Rust ESP-IDF component that exposes a small extern "C" API
-C. Extend lakers-c with an ESP32-compatible target and crypto backend
+[ ] cargo +esp is available
+[ ] xtensa-esp32-none-elf appears in the ESP toolchain target list
+[ ] idf.py fullclean succeeds
+[ ] idf.py build creates liblakers_esp32_ffi.a
+[ ] firmware links without undefined Rust symbols
+[ ] serial monitor prints Milestone 8 PASS
+[ ] the previous encrypted ESP-NOW KEY_TEST flow still passes
 ```
 
-The preferred direction is a small Rust static library with a narrow C API, preserving the existing ESP-IDF transport.
-
-## Milestone 8 target API
-
-The ESP32 C application should eventually call an interface similar to:
-
-```c
-esp_err_t edhoc_lakers_session_init(edhoc_role_t role);
-
-esp_err_t edhoc_lakers_make_message_1(
-    uint8_t *out,
-    size_t out_max,
-    size_t *out_len
-);
-
-esp_err_t edhoc_lakers_process_message_1(
-    const uint8_t *message_1,
-    size_t message_1_len,
-    uint8_t *message_2,
-    size_t message_2_max,
-    size_t *message_2_len
-);
-
-esp_err_t edhoc_lakers_process_message_2(
-    const uint8_t *message_2,
-    size_t message_2_len,
-    uint8_t *message_3,
-    size_t message_3_max,
-    size_t *message_3_len
-);
-
-esp_err_t edhoc_lakers_process_message_3(
-    const uint8_t *message_3,
-    size_t message_3_len
-);
-
-esp_err_t edhoc_lakers_export_espnow_lmk(
-    uint8_t out_lmk[16]
-);
-```
-
-## Milestone 7 acceptance checklist
-
-```text
-[ ] cargo run --release prints LAKERS_LIVE_HANDSHAKE=PASS
-[ ] generated message_1 is non-empty
-[ ] generated message_2 is non-empty
-[ ] generated message_3 is non-empty
-[ ] exported LMK length is 16 bytes
-[ ] initiator_responder_lmk_match=true
-[ ] cargo test passes
-[ ] run once with the real board MAC addresses and Wi-Fi channel
-```
-
-After this passes, Milestone 8 is the ESP32 Rust/C FFI and cross-compilation step.
+Detailed setup and troubleshooting are in `components/lakers_ffi/README.md`.
