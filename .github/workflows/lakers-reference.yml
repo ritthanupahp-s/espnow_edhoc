@@ -1,0 +1,37 @@
+name: Lakers live reference
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "tools/lakers_reference/**"
+      - ".github/workflows/lakers-reference.yml"
+  pull_request:
+    paths:
+      - "tools/lakers_reference/**"
+      - ".github/workflows/lakers-reference.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo files
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools/lakers_reference
+
+      - name: Check formatting
+        run: cargo fmt --manifest-path tools/lakers_reference/Cargo.toml -- --check
+
+      - name: Run live Lakers tests
+        run: cargo test --manifest-path tools/lakers_reference/Cargo.toml --locked=false
+
+      - name: Run reference handshake
+        run: cargo run --release --manifest-path tools/lakers_reference/Cargo.toml -- 02:00:00:00:00:01 02:00:00:00:00:02 1
