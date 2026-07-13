@@ -1,0 +1,139 @@
+# Live Lakers EDHOC reference
+
+This host-side Rust program runs a real EDHOC handshake using
+[`lake-rs/lakers`](https://github.com/lake-rs/lakers).
+
+It is Milestone 7 of the ESP-NOW EDHOC project.
+
+## What it proves
+
+The program runs the complete Lakers STAT-STAT / Cipher Suite 2 flow:
+
+```text
+Initiator prepare_message_1
+Responder process_message_1
+Responder prepare_message_2
+Initiator parse_message_2
+Initiator verify_message_2
+Initiator prepare_message_3
+Responder parse_message_3
+Responder verify_message_3
+Both peers complete without message_4
+Both peers call edhoc_exporter
+```
+
+It then verifies:
+
+```text
+initiator PRK_out == responder PRK_out
+initiator 16-byte LMK == responder 16-byte LMK
+```
+
+This is genuine Lakers cryptographic processing. It does not use the RFC trace arrays or the temporary SHA-256 transcript scaffold used by the ESP32 firmware in Milestones 4–6.
+
+## Requirements
+
+Install the stable Rust toolchain:
+
+```bash
+rustup toolchain install stable
+rustup default stable
+```
+
+## Run with default test identities
+
+From the repository root:
+
+```bash
+cd tools/lakers_reference
+cargo run --release
+```
+
+The default exporter context uses these placeholder values:
+
+```text
+Initiator MAC: 02:00:00:00:00:01
+Responder MAC: 02:00:00:00:00:02
+Wi-Fi channel: 1
+```
+
+## Run with the two real ESP32 identities
+
+Arguments must be ordered by EDHOC role, not by which board was flashed first:
+
+```bash
+cargo run --release -- <initiator-mac> <responder-mac> <channel>
+```
+
+Example:
+
+```bash
+cargo run --release -- 24:6F:28:11:22:33 24:6F:28:AA:BB:CC 1
+```
+
+The exporter context is constructed as:
+
+```text
+"ESP-NOW-LMK-v1"
+|| initiator STA MAC
+|| responder STA MAC
+|| Wi-Fi channel
+```
+
+This ordering must be identical on both ESP32 boards when the live Lakers exporter is moved into the firmware.
+
+## Expected output
+
+The actual messages and LMK change between runs because EDHOC creates fresh ephemeral keys.
+
+```text
+LAKERS_LIVE_HANDSHAKE=PASS
+authentication_method=STAT-STAT
+cipher_suite=2
+exporter_label=0xF0
+initiator_mac=24:6F:28:11:22:33
+responder_mac=24:6F:28:AA:BB:CC
+wifi_channel=1
+message_1_len=<generated length>
+message_1_hex=<generated EDHOC message_1>
+message_2_len=<generated length>
+message_2_hex=<generated EDHOC message_2>
+message_3_len=<generated length>
+message_3_hex=<generated EDHOC message_3>
+espnow_lmk_len=16
+espnow_lmk_hex=<16-byte Lakers exporter result>
+initiator_responder_lmk_match=true
+```
+
+## Tests
+
+```bash
+cargo test
+```
+
+The tests run a live handshake and confirm that the exported LMK has the required ESP-NOW length.
+
+## Security notes
+
+- The credentials and static private keys are public test values copied from the upstream Lakers example. Do not use them in a deployed system.
+- The program prints the derived LMK because it is a development reference tool. Do not log production key material.
+- Exporter label `0xF0` is currently project-local. Confirm the final label strategy before making standards-compliance claims.
+
+## Next integration step
+
+Milestone 8 should build a Lakers Rust static library for the ESP32 target and expose a small C FFI wrapper to the existing ESP-IDF application.
+
+The existing C transport should then replace:
+
+```c
+edhoc_trace_get_message(...)
+edhoc_exporter_trace_derive_espnow_lmk(...)
+```
+
+with live calls equivalent to:
+
+```text
+prepare/process/verify M1, M2, M3
+completed_without_message_4
+edhoc_exporter(0xF0, context, 16-byte output)
+```
