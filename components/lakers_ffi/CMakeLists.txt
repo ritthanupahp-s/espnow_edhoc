@@ -1,12 +1,14 @@
 idf_component_register(
     SRCS "lakers_ffi_component.c"
     INCLUDE_DIRS "include"
-    PRIV_REQUIRES log
+    PRIV_REQUIRES
+        log
+        esp_hw_support
 )
 
 if(NOT IDF_TARGET STREQUAL "esp32")
     message(FATAL_ERROR
-        "Milestone 8 currently targets the original Xtensa ESP32 only; IDF_TARGET=${IDF_TARGET}"
+        "Milestone 9 currently targets the original Xtensa ESP32 only; IDF_TARGET=${IDF_TARGET}"
     )
 endif()
 
@@ -36,7 +38,7 @@ add_custom_command(
         "${LAKERS_RUST_CRATE_DIR}/.cargo/config.toml"
         ${LAKERS_RUST_SOURCES}
     WORKING_DIRECTORY "${LAKERS_RUST_CRATE_DIR}"
-    COMMENT "Building Milestone 8 Rust static library for ${LAKERS_RUST_TARGET}"
+    COMMENT "Building Milestone 9 live Lakers Rust static library for ${LAKERS_RUST_TARGET}"
     VERBATIM
 )
 
