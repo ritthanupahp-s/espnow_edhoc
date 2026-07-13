@@ -31,7 +31,7 @@
 #define INITIATOR_KEY_TEST_DELAY_MS 750
 
 /* Lakers uses substantial stack during P-256 and transcript processing. */
-#define EDHOC_APP_TASK_STACK_SIZE 24576
+#define EDHOC_APP_TASK_STACK_SIZE 32768
 
 /* Set to 1 on exactly one board to prove mismatched exporter keys break encryption. */
 #define MILESTONE9_CORRUPT_LMK_FOR_TEST 0
