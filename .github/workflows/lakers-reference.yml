@@ -21,6 +21,8 @@ jobs:
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
 
       - name: Cache Cargo files
         uses: Swatinem/rust-cache@v2
@@ -31,7 +33,7 @@ jobs:
         run: cargo fmt --manifest-path tools/lakers_reference/Cargo.toml -- --check
 
       - name: Run live Lakers tests
-        run: cargo test --manifest-path tools/lakers_reference/Cargo.toml --locked=false
+        run: cargo test --manifest-path tools/lakers_reference/Cargo.toml
 
       - name: Run reference handshake
         run: cargo run --release --manifest-path tools/lakers_reference/Cargo.toml -- 02:00:00:00:00:01 02:00:00:00:00:02 1
