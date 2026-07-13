@@ -8,12 +8,13 @@
 static const char *TAG = "edhoc_transport";
 
 /*
- * Milestone 3 wire format:
+ * Wire format:
  *
  * magic | version | type | flags | session_id | seq | frag_idx | frag_count | payload_len | payload
  *
  * Fragment fields are included now so the format is ready for larger real EDHOC
- * messages later. Milestone 3 only sends one fragment: frag_idx=0, frag_count=1.
+ * messages later. Current milestones only send one fragment: frag_idx=0,
+ * frag_count=1.
  */
 typedef struct __attribute__((packed)) {
     uint8_t magic;
@@ -38,6 +39,10 @@ const char *edhoc_transport_type_str(uint8_t type)
         return "EDHOC_M3";
     case EDHOC_TRANSPORT_MSG_ACK:
         return "EDHOC_ACK";
+    case EDHOC_TRANSPORT_MSG_KEY_TEST:
+        return "KEY_TEST";
+    case EDHOC_TRANSPORT_MSG_KEY_TEST_ACK:
+        return "KEY_TEST_ACK";
     default:
         return "UNKNOWN";
     }
@@ -56,7 +61,7 @@ esp_err_t edhoc_transport_send(
     }
 
     if (payload_len > EDHOC_TRANSPORT_MAX_PAYLOAD_LEN) {
-        ESP_LOGE(TAG, "Payload too large for Milestone 3 transport: len=%u max=%u",
+        ESP_LOGE(TAG, "Payload too large for EDHOC transport: len=%u max=%u",
                  (unsigned)payload_len,
                  (unsigned)EDHOC_TRANSPORT_MAX_PAYLOAD_LEN);
         return ESP_ERR_INVALID_SIZE;
