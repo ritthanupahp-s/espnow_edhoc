@@ -32,6 +32,7 @@ add_custom_command(
             --release
     DEPENDS
         "${LAKERS_RUST_CRATE_DIR}/Cargo.toml"
+        "${LAKERS_RUST_CRATE_DIR}/.cargo/config.toml"
         ${LAKERS_RUST_SOURCES}
     WORKING_DIRECTORY "${LAKERS_RUST_CRATE_DIR}"
     COMMENT "Building Milestone 8 Rust static library for ${LAKERS_RUST_TARGET}"
