@@ -12,6 +12,7 @@ idf_component_register(
         esp_netif
         esp_wifi
         mbedtls
+        lakers_ffi
     INCLUDE_DIRS
         "."
 )
