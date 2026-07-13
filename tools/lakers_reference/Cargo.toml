@@ -5,5 +5,8 @@ edition = "2021"
 publish = false
 
 [dependencies]
-lakers = { version = "0.8.0", default-features = false }
-lakers-crypto = { version = "0.8.0", features = ["rustcrypto"] }
+# lakers-crypto is a workspace dispatch crate and is not published separately
+# on crates.io. Keep both crates on the same Git revision so their shared
+# EDHOC/Crypto types come from one source.
+lakers = { git = "https://github.com/lake-rs/lakers", rev = "aa3a79a4b9ffe7af0253193a5a46097b0ff6881e", package = "lakers", default-features = false }
+lakers-crypto = { git = "https://github.com/lake-rs/lakers", rev = "aa3a79a4b9ffe7af0253193a5a46097b0ff6881e", package = "lakers-crypto", features = ["rustcrypto"] }
