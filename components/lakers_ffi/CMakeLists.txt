@@ -3,6 +3,7 @@ idf_component_register(
     INCLUDE_DIRS "include"
     PRIV_REQUIRES
         log
+        freertos
         esp_hw_support
 )
 
@@ -45,3 +46,10 @@ add_custom_command(
 add_custom_target(lakers_ffi_rust_build DEPENDS "${LAKERS_RUST_LIBRARY}")
 add_dependencies(${COMPONENT_LIB} lakers_ffi_rust_build)
 target_link_libraries(${COMPONENT_LIB} INTERFACE "${LAKERS_RUST_LIBRARY}")
+
+# Redirect the public initializer to the C wrapper. The wrapper invokes the
+# original Rust symbol through __real_lakers_edhoc_session_init on a temporary
+# large-stack FreeRTOS task, avoiding overflow of ESP-IDF's main task.
+target_link_options(${COMPONENT_LIB} INTERFACE
+    "-Wl,--wrap=lakers_edhoc_session_init"
+)
