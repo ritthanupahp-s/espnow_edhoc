@@ -40,6 +40,40 @@ rustup toolchain install stable
 rustup default stable
 ```
 
+### Windows MSVC linker prerequisite
+
+The default Windows Rust target is normally `x86_64-pc-windows-msvc`. It requires the Microsoft C/C++ linker, libraries, and Windows SDK.
+
+Install Visual Studio 2022 Build Tools from an elevated PowerShell terminal:
+
+```powershell
+winget install --id Microsoft.VisualStudio.2022.BuildTools --source winget --force --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+Alternatively, open Visual Studio Installer and select the **Desktop development with C++** workload. At minimum, install:
+
+```text
+MSVC v143 C++ x64/x86 build tools
+Windows 10 or Windows 11 SDK
+```
+
+After installation, close and reopen PowerShell or VS Code before running Cargo again.
+
+Verify the toolchain:
+
+```powershell
+rustc -vV
+where.exe link
+```
+
+`rustc -vV` should report:
+
+```text
+host: x86_64-pc-windows-msvc
+```
+
+If `where.exe link` still finds nothing in an ordinary PowerShell window, open **Developer PowerShell for VS 2022**, return to this directory, and run Cargo there.
+
 ## Dependency source
 
 The project pins both `lakers` and `lakers-crypto` to the same Lakers Git revision.
