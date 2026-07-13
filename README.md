@@ -2,7 +2,9 @@
 
 This repository is being built incrementally for a thesis proof of concept.
 
-Current implementation: **Milestone 6 — install the post-handshake LMK and switch to encrypted ESP-NOW unicast**.
+Current implementation: **Milestone 7 — live Lakers EDHOC reference handshake and exporter on the host**.
+
+The ESP32 firmware remains at the completed Milestone 6 handover flow while the project establishes a verified live-EDHOC source of truth before adding the Rust/C ESP32 bridge.
 
 ## Roadmap position
 
@@ -10,259 +12,256 @@ Current implementation: **Milestone 6 — install the post-handshake LMK and swi
 Milestone 1: minimal unencrypted ESP-NOW unicast ping/pong        DONE
 Milestone 2: static encrypted ESP-NOW with manual PMK + LMK       DONE
 Milestone 3: fake EDHOC transport over ESP-NOW                    DONE
-Milestone 4: real EDHOC trace messages over ESP-NOW               DONE
+Milestone 4: RFC 9529 EDHOC trace messages over ESP-NOW           DONE
 Milestone 5: derive 16-byte LMK-shaped output after EDHOC flow    DONE
-Milestone 6: install derived LMK and test encrypted traffic       CURRENT
-Next: replace trace scaffold with live Lakers EDHOC/exporter       NEXT
+Milestone 6: install derived LMK and test encrypted traffic       DONE
+Milestone 7: live Lakers handshake and exporter on host           CURRENT
+Milestone 8: build Lakers for ESP32 and connect it through FFI    NEXT
 ```
 
-## Milestone 6 goal
+## Milestone 7 goal
 
-Prove the complete ESP-NOW security handover:
+Run genuine EDHOC cryptographic processing with the selected reference implementation:
 
 ```text
-1. Start with peer encrypt=false
-2. Transport EDHOC message_1/message_2/message_3 over ESP-NOW
-3. Derive the same 16-byte LMK candidate on both boards
-4. Modify the existing peer with encrypt=true and the derived LMK
-5. Send encrypted KEY_TEST
-6. Reply with encrypted KEY_TEST_ACK
+https://github.com/lake-rs/lakers
 ```
 
-A successful KEY_TEST round trip proves that both ESP32 devices installed matching LMKs and that ESP-NOW accepted the transition from unencrypted to encrypted unicast.
-
-## Important limitation
-
-The current LMK source is still the Milestone 5 **trace-only scaffold**:
+The host reference performs:
 
 ```text
-RFC 9529 trace transcript -> SHA-256 scaffold -> first 16 bytes -> ESP-NOW LMK
+Initiator prepare_message_1
+Responder process_message_1
+Responder prepare_message_2
+Initiator parse_message_2
+Initiator verify_message_2
+Initiator prepare_message_3
+Responder parse_message_3
+Responder verify_message_3
+Both peers complete without message_4
+Both peers call edhoc_exporter
 ```
 
-It is not yet the result of a live Lakers EDHOC session and must not be treated as production security.
+It proves:
 
-The next development phase must replace:
+```text
+initiator PRK_out == responder PRK_out
+initiator 16-byte LMK == responder 16-byte LMK
+```
+
+Unlike Milestones 4–6, this path does not use stored RFC trace messages or the temporary SHA-256 transcript scaffold.
+
+## New host reference tool
+
+```text
+tools/lakers_reference/Cargo.toml
+tools/lakers_reference/src/main.rs
+tools/lakers_reference/README.md
+```
+
+A GitHub Actions workflow also builds and runs the reference:
+
+```text
+.github/workflows/lakers-reference.yml
+```
+
+## Run the live Lakers handshake
+
+Install stable Rust, then run from the repository root:
+
+```bash
+cd tools/lakers_reference
+cargo run --release
+```
+
+The default run uses placeholder ESP-NOW identities:
+
+```text
+Initiator MAC: 02:00:00:00:00:01
+Responder MAC: 02:00:00:00:00:02
+Wi-Fi channel: 1
+```
+
+Run with the actual two ESP32 STA MAC addresses and channel:
+
+```bash
+cargo run --release -- <initiator-mac> <responder-mac> <channel>
+```
+
+Example:
+
+```bash
+cargo run --release -- 24:6F:28:11:22:33 24:6F:28:AA:BB:CC 1
+```
+
+The MAC arguments must be ordered by EDHOC role:
+
+```text
+first argument  = initiator STA MAC
+second argument = responder STA MAC
+```
+
+## Exporter configuration
+
+Milestone 7 uses:
+
+```text
+Exporter label: 0xF0
+Output length: 16 bytes
+```
+
+The exporter context is:
+
+```text
+"ESP-NOW-LMK-v1"
+|| initiator STA MAC
+|| responder STA MAC
+|| Wi-Fi channel
+```
+
+The same byte ordering must be used later on both ESP32 devices.
+
+## Expected output
+
+The actual EDHOC messages and LMK change between runs because Lakers generates fresh ephemeral keys.
+
+```text
+LAKERS_LIVE_HANDSHAKE=PASS
+authentication_method=STAT-STAT
+cipher_suite=2
+exporter_label=0xF0
+initiator_mac=24:6F:28:11:22:33
+responder_mac=24:6F:28:AA:BB:CC
+wifi_channel=1
+exporter_context_len=28
+exporter_context_hex=<context bytes>
+message_1_len=<generated length>
+message_1_hex=<live EDHOC message_1>
+message_2_len=<generated length>
+message_2_hex=<live EDHOC message_2>
+message_3_len=<generated length>
+message_3_hex=<live EDHOC message_3>
+espnow_lmk_len=16
+espnow_lmk_hex=<live Lakers exporter result>
+initiator_responder_lmk_match=true
+```
+
+Run the automated tests with:
+
+```bash
+cargo test
+```
+
+## Credentials used by the reference
+
+The host program uses the public test credentials and static authentication keys from the upstream Lakers embedded example.
+
+They are appropriate for interoperability and development testing only:
+
+```text
+Authentication method: STAT-STAT
+Cipher Suite: 2
+Credential transfer: by reference
+```
+
+Do not reuse the included private keys in a deployed system.
+
+## Relationship to the ESP32 firmware
+
+The ESP32 C firmware still demonstrates the complete transport and key handover mechanics:
+
+```text
+peer encrypt=false
+    -> EDHOC-shaped M1/M2/M3 transport
+        -> shared 16-byte value
+            -> esp_now_mod_peer(encrypt=true, LMK)
+                -> encrypted KEY_TEST / KEY_TEST_ACK
+```
+
+Milestone 7 now supplies the verified live Lakers logic that must replace these temporary firmware functions:
 
 ```c
+edhoc_trace_get_message()
+edhoc_trace_verify_message()
 edhoc_exporter_trace_derive_espnow_lmk()
 ```
 
-with a Lakers-backed completed-session exporter call.
-
-## Security transition
-
-The handover is deliberately ordered to avoid changing the peer too early:
+The existing Milestone 6 ESP-NOW code should remain reusable:
 
 ```text
-Initiator                         Responder
----------                         ---------
-M1          -- unencrypted -->
-            <-- unencrypted --   M2
-M3          -- unencrypted -->
-            <-- unencrypted --   final EDHOC ACK
-install LMK                       wait 250 ms
-peer encrypt=true                 install LMK
-wait 750 ms                       peer encrypt=true
-KEY_TEST    -- encrypted ----->
-            <---- encrypted --   KEY_TEST_ACK
+edhoc_transport_send()
+espnow_transport_receive queue
+key_manager_enable_derived_espnow_encryption()
+KEY_TEST / KEY_TEST_ACK
+peer encrypt=false -> encrypt=true handover
 ```
 
-The responder delay allows its final unencrypted ACK to leave before it modifies the peer. The longer initiator delay gives the responder time to install its LMK before encrypted traffic starts.
+## Why Lakers is not linked into ESP-IDF yet
 
-If the transition is unreliable on a particular ESP32 or radio environment, increase:
+The project firmware is currently C, while Lakers is Rust.
+
+The upstream `lakers-c/build.sh` currently builds its static C library for Cortex-M4 targets or the host. It does not directly produce an Xtensa ESP32 library.
+
+Therefore, the next milestone must create and validate one of these bridges:
+
+```text
+A. Cross-compile a Lakers staticlib for the ESP32 Rust target and call it from C
+B. Add a Rust ESP-IDF component that exposes a small extern "C" API
+C. Extend lakers-c with an ESP32-compatible target and crypto backend
+```
+
+The preferred direction is a small Rust static library with a narrow C API, preserving the existing ESP-IDF transport.
+
+## Milestone 8 target API
+
+The ESP32 C application should eventually call an interface similar to:
 
 ```c
-RESPONDER_ENCRYPTION_SWITCH_DELAY_MS
-INITIATOR_KEY_TEST_DELAY_MS
+esp_err_t edhoc_lakers_session_init(edhoc_role_t role);
+
+esp_err_t edhoc_lakers_make_message_1(
+    uint8_t *out,
+    size_t out_max,
+    size_t *out_len
+);
+
+esp_err_t edhoc_lakers_process_message_1(
+    const uint8_t *message_1,
+    size_t message_1_len,
+    uint8_t *message_2,
+    size_t message_2_max,
+    size_t *message_2_len
+);
+
+esp_err_t edhoc_lakers_process_message_2(
+    const uint8_t *message_2,
+    size_t message_2_len,
+    uint8_t *message_3,
+    size_t message_3_max,
+    size_t *message_3_len
+);
+
+esp_err_t edhoc_lakers_process_message_3(
+    const uint8_t *message_3,
+    size_t message_3_len
+);
+
+esp_err_t edhoc_lakers_export_espnow_lmk(
+    uint8_t out_lmk[16]
+);
 ```
 
-## New transport message types
+## Milestone 7 acceptance checklist
 
 ```text
-0x20 = KEY_TEST
-0x21 = KEY_TEST_ACK
+[ ] cargo run --release prints LAKERS_LIVE_HANDSHAKE=PASS
+[ ] generated message_1 is non-empty
+[ ] generated message_2 is non-empty
+[ ] generated message_3 is non-empty
+[ ] exported LMK length is 16 bytes
+[ ] initiator_responder_lmk_match=true
+[ ] cargo test passes
+[ ] run once with the real board MAC addresses and Wi-Fi channel
 ```
 
-These use the same transport frame as EDHOC:
-
-```text
-magic | version | type | flags | session_id | seq | frag_idx | frag_count | payload_len | payload
-```
-
-Before the peer update, ESP-NOW carries the frame unencrypted. After `encrypt=true`, ESP-NOW encrypts the same frame format using the installed LMK.
-
-## Files
-
-```text
-main/main.c                    Milestone 6 handover state machine
-main/device_config.h           Role, peer MAC, transition delays, negative-test flag
-main/espnow_transport.c        Raw ESP-NOW peer/send/receive functions
-main/edhoc_transport.c         EDHOC and KEY_TEST frame serialization/parsing
-main/edhoc_transport.h         Message types including KEY_TEST and KEY_TEST_ACK
-main/edhoc_trace_vectors.c     RFC 9529 message vectors
-main/edhoc_exporter.c          Temporary trace-only 16-byte LMK derivation
-main/key_manager.c             Static LMK baseline and derived LMK peer installation
-main/key_manager.h             Key-manager interfaces
-docs/lakers_integration.md     Planned Lakers integration boundary
-```
-
-## How peer installation works
-
-After deriving the 16-byte value, Milestone 6 calls:
-
-```c
-key_manager_enable_derived_espnow_encryption(PEER_MAC, lmk);
-```
-
-The function:
-
-```text
-1. installs the lab PMK
-2. finds the existing peer
-3. changes peer.encrypt from false to true
-4. copies the derived 16-byte LMK into the peer entry
-5. calls esp_now_mod_peer()
-6. reads the peer back and verifies encrypt=true
-```
-
-The LMK buffer used by the application is cleared after installation.
-
-## Configure Board A
-
-In `main/device_config.h`:
-
-```c
-#define DEVICE_IS_INITIATOR 1
-#define EDHOC_TRACE_TRANSPORT_ENABLED 1
-#define DYNAMIC_LMK_SWITCH_ENABLED 1
-#define ESPNOW_STATIC_ENCRYPTION_ENABLED 0
-#define MILESTONE6_CORRUPT_LMK_FOR_TEST 0
-
-static const uint8_t PEER_MAC[6] = {
-    /* Board B STA MAC */
-    0x24, 0x6F, 0x28, 0xAA, 0xBB, 0xCC
-};
-```
-
-## Configure Board B
-
-```c
-#define DEVICE_IS_INITIATOR 0
-#define EDHOC_TRACE_TRANSPORT_ENABLED 1
-#define DYNAMIC_LMK_SWITCH_ENABLED 1
-#define ESPNOW_STATIC_ENCRYPTION_ENABLED 0
-#define MILESTONE6_CORRUPT_LMK_FOR_TEST 0
-
-static const uint8_t PEER_MAC[6] = {
-    /* Board A STA MAC */
-    0x24, 0x6F, 0x28, 0x11, 0x22, 0x33
-};
-```
-
-## Build and flash
-
-```bash
-idf.py set-target esp32
-idf.py build
-idf.py -p COMx flash monitor
-```
-
-## Expected initiator logs
-
-```text
-EDHOC ESP-NOW thesis demo - Milestone 6
-Role: INITIATOR
-Security mode: unencrypted-edhoc-then-derived-lmk-encrypted
-Initial peer state: encrypt=false for EDHOC transport
-Starting unencrypted EDHOC trace transport exchange
-EDHOC message_2 accepted; sending message_3 while peer is still unencrypted
-Final unencrypted EDHOC ACK received; installing LMK on initiator
-TRACE-ONLY LMK derivation active
-LMK summary: len=16 sha256_prefix=AA:BB:CC:DD
-Installing post-handshake LMK into ESP-NOW peer table
-Modifying existing peer ... encrypted=1
-Peer table updated successfully: encrypt=true LMK_len=16
-Security transition complete: peer is now encrypt=true
-Sending first post-handshake frame; ESP-NOW peer should encrypt this frame
-ENCRYPTED APP TX: type=KEY_TEST
-ENCRYPTED APP RX verified: type=KEY_TEST_ACK
-Milestone 6 PASS: derived LMK installed and encrypted ESP-NOW KEY_TEST round trip succeeded
-```
-
-## Expected responder logs
-
-```text
-EDHOC ESP-NOW thesis demo - Milestone 6
-Role: RESPONDER
-Initial peer state: encrypt=false for EDHOC transport
-EDHOC message_1 accepted; sending message_2 while peer is still unencrypted
-EDHOC message_3 accepted; sending final ACK before enabling peer encryption
-Installing LMK on responder after final unencrypted ACK
-TRACE-ONLY LMK derivation active
-LMK summary: len=16 sha256_prefix=AA:BB:CC:DD
-Peer table updated successfully: encrypt=true LMK_len=16
-Pairing state -> WAIT_KEY_TEST
-ENCRYPTED APP RX verified: type=KEY_TEST
-Encrypted KEY_TEST accepted; replying with encrypted KEY_TEST_ACK
-Milestone 6 PASS: responder received and acknowledged encrypted traffic using the derived LMK
-```
-
-Both boards should print the same LMK hash prefix.
-
-## Required negative test
-
-To prove the encrypted exchange depends on matching LMKs:
-
-1. Keep this value on Board A:
-
-```c
-#define MILESTONE6_CORRUPT_LMK_FOR_TEST 0
-```
-
-2. Set this value on Board B only:
-
-```c
-#define MILESTONE6_CORRUPT_LMK_FOR_TEST 1
-```
-
-3. Rebuild and flash Board B.
-
-Expected result:
-
-```text
-The two LMK summary prefixes differ.
-KEY_TEST is not successfully received or acknowledged.
-Milestone 6 PASS does not appear on the initiator.
-The ESP-NOW send callback may report FAIL.
-```
-
-Restore the value to `0` after the test.
-
-## What Milestone 6 demonstrates
-
-Milestone 6 demonstrates the engineering path required by the thesis:
-
-```text
-pre-key unencrypted ESP-NOW transport
-    -> EDHOC-style exchange
-        -> shared 16-byte output
-            -> ESP-NOW peer-table update
-                -> encrypted post-handshake communication
-```
-
-It does not yet demonstrate real EDHOC authentication, forward secrecy, or a standards-compliant EDHOC exporter because the Lakers runtime has not yet been linked.
-
-## Next phase
-
-Replace the RFC trace and SHA-256 scaffold with a live Lakers session:
-
-```text
-Lakers initiator.prepare_message_1()
-Lakers responder.process_message_1()
-Lakers responder.prepare_message_2()
-Lakers initiator.parse_message_2() + verify_message_2()
-Lakers initiator.prepare_message_3()
-Lakers responder.parse_message_3() + verify_message_3()
-Both completed sessions -> edhoc_exporter(..., 16-byte output)
-The existing Milestone 6 peer installation and KEY_TEST code stays unchanged.
-```
+After this passes, Milestone 8 is the ESP32 Rust/C FFI and cross-compilation step.
