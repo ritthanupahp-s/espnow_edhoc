@@ -3,20 +3,21 @@
 #include <stdint.h>
 
 /*
- * Milestone 5 configuration
+ * Milestone 6 configuration
  * -------------------------
  * Flash one board with DEVICE_IS_INITIATOR = 1.
  * Flash the other board with DEVICE_IS_INITIATOR = 0.
  *
  * PEER_MAC must be the other ESP32 board's printed STA MAC address.
  *
- * Milestone 5 still transports RFC 9529 EDHOC message_1/message_2/message_3
- * bytes over the ESP-NOW EDHOC transport frame. After the trace exchange
- * completes, both boards derive a deterministic 16-byte LMK candidate.
+ * Milestone 6 transports RFC 9529 EDHOC trace messages while the ESP-NOW peer
+ * is unencrypted, derives the same 16-byte LMK candidate on both boards,
+ * updates the existing peer to encrypt=true, and verifies the switch using an
+ * encrypted KEY_TEST / KEY_TEST_ACK exchange.
  *
- * Important: this is a trace-only LMK derivation scaffold, not a real EDHOC
- * exporter result yet. The next step is to replace the trace-only derivation
- * with Lakers' completed-session edhoc_exporter().
+ * Important: the current LMK source remains the trace-only scaffold from
+ * Milestone 5. Replace it with Lakers' completed-session edhoc_exporter()
+ * before treating this as real EDHOC-derived security.
  */
 #define DEVICE_IS_INITIATOR 1
 
@@ -26,17 +27,25 @@
 /* Initiator starts the EDHOC trace exchange once after this delay. */
 #define EDHOC_TRACE_START_DELAY_MS 2000
 
-/* Keep payloads small for the first prototype. ESP-NOW v1 safe limit is 250 bytes. */
+/* Allow the responder's final unencrypted ACK to leave before peer modification. */
+#define RESPONDER_ENCRYPTION_SWITCH_DELAY_MS 250
+
+/* Give the responder time to install its LMK before the encrypted KEY_TEST. */
+#define INITIATOR_KEY_TEST_DELAY_MS 750
+
+/* Keep payloads small for the prototype. ESP-NOW v1 safe limit is 250 bytes. */
 #define APP_PAYLOAD_MAX_LEN 64
 
-/* Active Milestone 5 mode: RFC 9529 EDHOC trace + trace-only LMK scaffold. */
+/* Active Milestone 6 mode. */
 #define EDHOC_TRACE_TRANSPORT_ENABLED 1
+#define DYNAMIC_LMK_SWITCH_ENABLED 1
 
-/* Milestone 3 fake string mode is disabled. */
+/* Previous modes remain disabled. */
 #define FAKE_EDHOC_TRANSPORT_ENABLED 0
-
-/* Keep Milestone 2 control keys in the repo, but disable static encryption for Milestone 5. */
 #define ESPNOW_STATIC_ENCRYPTION_ENABLED 0
+
+/* Set to 1 on exactly one board to prove mismatched LMKs break encryption. */
+#define MILESTONE6_CORRUPT_LMK_FOR_TEST 0
 
 /* One fixed EDHOC transport session ID for the two-board prototype. */
 #define EDHOC_TRACE_SESSION_ID 0x1234
@@ -45,10 +54,8 @@
  * ESP-NOW PMK and LMK are both 16 bytes.
  * These are lab/demo keys only. Do not use these values in a real deployment.
  *
- * PMK: Primary Master Key, used by ESP-NOW to protect LMKs internally.
- * LMK: Local Master Key, installed per peer for encrypted unicast frames.
- *
- * Milestone 2 uses these. Milestone 5 leaves them unused.
+ * The static PMK is retained to protect the dynamically installed per-peer LMK.
+ * The static LMK remains only as the Milestone 2 comparison baseline.
  */
 static const uint8_t ESPNOW_STATIC_PMK[16] = {
     0x10, 0x11, 0x12, 0x13,
