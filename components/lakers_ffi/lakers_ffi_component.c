@@ -4,7 +4,7 @@
 #include "lakers_ffi.h"
 
 #define FFI_TEST_INPUT UINT32_C(0x12345678)
-#define FFI_TRANSFORM_MASK UINT32_C(0xED0C0008)
+#define FFI_TRANSFORM_MASK UINT32_C(0xED0C0009)
 
 static const char *TAG = "lakers_ffi";
 
@@ -25,6 +25,26 @@ bool lakers_ffi_self_test(uint32_t *rust_output)
     return lakers_ffi_abi_version() == LAKERS_FFI_ABI_VERSION_EXPECTED && output == expected;
 }
 
+const char *lakers_edhoc_status_string(int32_t status)
+{
+    switch (status) {
+    case LAKERS_EDHOC_STATUS_OK:
+        return "OK";
+    case LAKERS_EDHOC_STATUS_INVALID_ARGUMENT:
+        return "INVALID_ARGUMENT";
+    case LAKERS_EDHOC_STATUS_WRONG_STATE:
+        return "WRONG_STATE";
+    case LAKERS_EDHOC_STATUS_BUFFER_TOO_SMALL:
+        return "BUFFER_TOO_SMALL";
+    case LAKERS_EDHOC_STATUS_PROTOCOL_ERROR:
+        return "PROTOCOL_ERROR";
+    case LAKERS_EDHOC_STATUS_CREDENTIAL_ERROR:
+        return "CREDENTIAL_ERROR";
+    default:
+        return "UNKNOWN";
+    }
+}
+
 static void __attribute__((constructor)) lakers_ffi_boot_probe(void)
 {
     uint32_t rust_output = 0;
@@ -32,14 +52,14 @@ static void __attribute__((constructor)) lakers_ffi_boot_probe(void)
 
     if (!lakers_ffi_self_test(&rust_output)) {
         ESP_EARLY_LOGE(TAG,
-                       "Milestone 8 FAIL: Rust/C FFI self-test failed abi=0x%08lX output=0x%08lX",
+                       "Milestone 9 FAIL: Rust/C FFI self-test failed abi=0x%08lX output=0x%08lX",
                        (unsigned long)abi_version,
                        (unsigned long)rust_output);
         abort();
     }
 
     ESP_EARLY_LOGI(TAG,
-                   "Milestone 8 PASS: ESP-IDF C called Xtensa Rust staticlib abi=0x%08lX output=0x%08lX",
+                   "Milestone 9 FFI ready: ESP-IDF C called Lakers Rust staticlib abi=0x%08lX output=0x%08lX",
                    (unsigned long)abi_version,
                    (unsigned long)rust_output);
 }
