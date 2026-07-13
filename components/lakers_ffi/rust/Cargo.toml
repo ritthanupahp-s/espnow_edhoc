@@ -1,11 +1,16 @@
 [package]
 name = "lakers-esp32-ffi"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 publish = false
 
 [lib]
 crate-type = ["staticlib"]
+
+[dependencies]
+lakers = { git = "https://github.com/lake-rs/lakers", rev = "aa3a79a4b9ffe7af0253193a5a46097b0ff6881e", package = "lakers", default-features = false }
+lakers-crypto-rustcrypto = { git = "https://github.com/lake-rs/lakers", rev = "aa3a79a4b9ffe7af0253193a5a46097b0ff6881e", package = "lakers-crypto-rustcrypto", default-features = false }
+rand_core = { version = "0.6.4", default-features = false }
 
 [profile.dev]
 panic = "abort"
