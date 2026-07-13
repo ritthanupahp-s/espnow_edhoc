@@ -13,10 +13,12 @@
 #define EDHOC_TRANSPORT_MAX_PAYLOAD_LEN 160
 
 typedef enum {
-    EDHOC_TRANSPORT_MSG_M1  = 0x10,
-    EDHOC_TRANSPORT_MSG_M2  = 0x11,
-    EDHOC_TRANSPORT_MSG_M3  = 0x12,
-    EDHOC_TRANSPORT_MSG_ACK = 0x13,
+    EDHOC_TRANSPORT_MSG_M1           = 0x10,
+    EDHOC_TRANSPORT_MSG_M2           = 0x11,
+    EDHOC_TRANSPORT_MSG_M3           = 0x12,
+    EDHOC_TRANSPORT_MSG_ACK          = 0x13,
+    EDHOC_TRANSPORT_MSG_KEY_TEST     = 0x20,
+    EDHOC_TRANSPORT_MSG_KEY_TEST_ACK = 0x21,
 } edhoc_transport_msg_type_t;
 
 typedef struct {
