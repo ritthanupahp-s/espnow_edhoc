@@ -2,7 +2,7 @@
 
 This repository is being built incrementally for a thesis proof of concept.
 
-Current implementation: **Milestone 5 — EDHOC trace transport plus 16-byte ESP-NOW LMK derivation scaffold**.
+Current implementation: **Milestone 6 — install the post-handshake LMK and switch to encrypted ESP-NOW unicast**.
 
 ## Roadmap position
 
@@ -11,109 +11,132 @@ Milestone 1: minimal unencrypted ESP-NOW unicast ping/pong        DONE
 Milestone 2: static encrypted ESP-NOW with manual PMK + LMK       DONE
 Milestone 3: fake EDHOC transport over ESP-NOW                    DONE
 Milestone 4: real EDHOC trace messages over ESP-NOW               DONE
-Milestone 5: derive 16-byte LMK-shaped output after EDHOC flow    CURRENT
-Milestone 6: install EDHOC-derived LMK into ESP-NOW peer table    NEXT
+Milestone 5: derive 16-byte LMK-shaped output after EDHOC flow    DONE
+Milestone 6: install derived LMK and test encrypted traffic       CURRENT
+Next: replace trace scaffold with live Lakers EDHOC/exporter       NEXT
 ```
 
-## Milestone 5 goal
+## Milestone 6 goal
 
-Prepare the project for the EDHOC exporter step.
-
-After the RFC 9529 EDHOC message exchange completes, both boards now derive the same 16-byte ESP-NOW LMK-shaped value and print a safe hash summary.
-
-Important limitation:
+Prove the complete ESP-NOW security handover:
 
 ```text
-This milestone does not yet call the real Lakers edhoc_exporter().
-The current derivation is trace-only and must not be treated as secure key material.
+1. Start with peer encrypt=false
+2. Transport EDHOC message_1/message_2/message_3 over ESP-NOW
+3. Derive the same 16-byte LMK candidate on both boards
+4. Modify the existing peer with encrypt=true and the derived LMK
+5. Send encrypted KEY_TEST
+6. Reply with encrypted KEY_TEST_ACK
 ```
 
-The purpose is to create and test the C boundary where the future Lakers exporter result will be handed to ESP-NOW.
+A successful KEY_TEST round trip proves that both ESP32 devices installed matching LMKs and that ESP-NOW accepted the transition from unencrypted to encrypted unicast.
 
-## Lakers reference
+## Important limitation
 
-The intended EDHOC implementation is:
+The current LMK source is still the Milestone 5 **trace-only scaffold**:
 
 ```text
-https://github.com/lake-rs/lakers
+RFC 9529 trace transcript -> SHA-256 scaffold -> first 16 bytes -> ESP-NOW LMK
 ```
 
-Lakers is a Rust EDHOC implementation. Its README says it is `no_std`, optimized for microcontrollers, avoids heap allocations, has configurable crypto backends, provides C bindings, and currently supports STAT-STAT with Cipher Suite 2.
+It is not yet the result of a live Lakers EDHOC session and must not be treated as production security.
 
-See:
+The next development phase must replace:
+
+```c
+edhoc_exporter_trace_derive_espnow_lmk()
+```
+
+with a Lakers-backed completed-session exporter call.
+
+## Security transition
+
+The handover is deliberately ordered to avoid changing the peer too early:
 
 ```text
-docs/lakers_integration.md
+Initiator                         Responder
+---------                         ---------
+M1          -- unencrypted -->
+            <-- unencrypted --   M2
+M3          -- unencrypted -->
+            <-- unencrypted --   final EDHOC ACK
+install LMK                       wait 250 ms
+peer encrypt=true                 install LMK
+wait 750 ms                       peer encrypt=true
+KEY_TEST    -- encrypted ----->
+            <---- encrypted --   KEY_TEST_ACK
 ```
 
-for the integration plan.
+The responder delay allows its final unencrypted ACK to leave before it modifies the peer. The longer initiator delay gives the responder time to install its LMK before encrypted traffic starts.
 
-## Current Milestone 5 flow
+If the transition is unreliable on a particular ESP32 or radio environment, increase:
+
+```c
+RESPONDER_ENCRYPTION_SWITCH_DELAY_MS
+INITIATOR_KEY_TEST_DELAY_MS
+```
+
+## New transport message types
 
 ```text
-ESP32 A -- unencrypted ESP-NOW: RFC9529 message_1 --> ESP32 B
-ESP32 A <-- unencrypted ESP-NOW: RFC9529 message_2 -- ESP32 B
-ESP32 A -- unencrypted ESP-NOW: RFC9529 message_3 --> ESP32 B
-ESP32 A <-- unencrypted ESP-NOW: small demo ACK     -- ESP32 B
-
-Both boards:
-RFC9529 transcript -> trace-only LMK scaffold -> 16-byte LMK candidate
+0x20 = KEY_TEST
+0x21 = KEY_TEST_ACK
 ```
 
-Both boards should print the same `LMK summary` prefix.
+These use the same transport frame as EDHOC:
+
+```text
+magic | version | type | flags | session_id | seq | frag_idx | frag_count | payload_len | payload
+```
+
+Before the peer update, ESP-NOW carries the frame unencrypted. After `encrypt=true`, ESP-NOW encrypts the same frame format using the installed LMK.
 
 ## Files
 
 ```text
-main/main.c                    RFC 9529 trace state machine + LMK scaffold call
-main/device_config.h           Role, Wi-Fi channel, EDHOC trace session ID, peer MAC
-main/espnow_transport.c        Wi-Fi + ESP-NOW setup, callbacks, PMK setup, peer add, send, receive queue
-main/espnow_transport.h        Raw ESP-NOW transport interface
-main/edhoc_transport.c         EDHOC-style frame serialization/parsing over ESP-NOW
-main/edhoc_transport.h         EDHOC transport interface and message types
-main/edhoc_trace_vectors.c     RFC 9529 message_1/message_2/message_3 byte strings and verification
-main/edhoc_trace_vectors.h     RFC 9529 trace vector interface
-main/edhoc_exporter.c          Temporary trace-only LMK derivation scaffold
-main/edhoc_exporter.h          EDHOC exporter / ESP-NOW LMK interface
-main/key_manager.c             Milestone 2 static PMK/LMK helper, retained for later comparison
-docs/lakers_integration.md     Lakers integration plan and API mapping
+main/main.c                    Milestone 6 handover state machine
+main/device_config.h           Role, peer MAC, transition delays, negative-test flag
+main/espnow_transport.c        Raw ESP-NOW peer/send/receive functions
+main/edhoc_transport.c         EDHOC and KEY_TEST frame serialization/parsing
+main/edhoc_transport.h         Message types including KEY_TEST and KEY_TEST_ACK
+main/edhoc_trace_vectors.c     RFC 9529 message vectors
+main/edhoc_exporter.c          Temporary trace-only 16-byte LMK derivation
+main/key_manager.c             Static LMK baseline and derived LMK peer installation
+main/key_manager.h             Key-manager interfaces
+docs/lakers_integration.md     Planned Lakers integration boundary
 ```
 
-## Why this milestone exists
+## How peer installation works
 
-The final thesis goal requires this sequence:
+After deriving the 16-byte value, Milestone 6 calls:
+
+```c
+key_manager_enable_derived_espnow_encryption(PEER_MAC, lmk);
+```
+
+The function:
 
 ```text
-EDHOC complete
-    -> EDHOC exporter
-        -> 16-byte ESP-NOW LMK
-            -> install LMK in ESP-NOW peer table
-                -> encrypted post-handshake ESP-NOW unicast
+1. installs the lab PMK
+2. finds the existing peer
+3. changes peer.encrypt from false to true
+4. copies the derived 16-byte LMK into the peer entry
+5. calls esp_now_mod_peer()
+6. reads the peer back and verifies encrypt=true
 ```
 
-Milestone 5 creates the boundary for:
+The LMK buffer used by the application is cleared after installation.
 
-```c
-esp_err_t edhoc_exporter_trace_derive_espnow_lmk(uint8_t out_lmk[16]);
-```
-
-Later, this function should be replaced by a Lakers-backed function such as:
-
-```c
-esp_err_t edhoc_lakers_export_espnow_lmk(uint8_t out_lmk[16]);
-```
-
-## How to run Milestone 5
-
-### 1. Configure Board A
+## Configure Board A
 
 In `main/device_config.h`:
 
 ```c
 #define DEVICE_IS_INITIATOR 1
 #define EDHOC_TRACE_TRANSPORT_ENABLED 1
-#define FAKE_EDHOC_TRANSPORT_ENABLED 0
+#define DYNAMIC_LMK_SWITCH_ENABLED 1
 #define ESPNOW_STATIC_ENCRYPTION_ENABLED 0
+#define MILESTONE6_CORRUPT_LMK_FOR_TEST 0
 
 static const uint8_t PEER_MAC[6] = {
     /* Board B STA MAC */
@@ -121,17 +144,14 @@ static const uint8_t PEER_MAC[6] = {
 };
 ```
 
-Build and flash Board A.
-
-### 2. Configure Board B
-
-In `main/device_config.h`:
+## Configure Board B
 
 ```c
 #define DEVICE_IS_INITIATOR 0
 #define EDHOC_TRACE_TRANSPORT_ENABLED 1
-#define FAKE_EDHOC_TRANSPORT_ENABLED 0
+#define DYNAMIC_LMK_SWITCH_ENABLED 1
 #define ESPNOW_STATIC_ENCRYPTION_ENABLED 0
+#define MILESTONE6_CORRUPT_LMK_FOR_TEST 0
 
 static const uint8_t PEER_MAC[6] = {
     /* Board A STA MAC */
@@ -139,9 +159,7 @@ static const uint8_t PEER_MAC[6] = {
 };
 ```
 
-Build and flash Board B.
-
-### 3. Build and flash
+## Build and flash
 
 ```bash
 idf.py set-target esp32
@@ -149,80 +167,102 @@ idf.py build
 idf.py -p COMx flash monitor
 ```
 
-## Expected logs
-
-Initiator:
+## Expected initiator logs
 
 ```text
-EDHOC ESP-NOW thesis demo - Milestone 5
+EDHOC ESP-NOW thesis demo - Milestone 6
 Role: INITIATOR
-Security mode: unencrypted-rfc9529-edhoc-trace-plus-lmk-scaffold
-Starting RFC 9529 EDHOC trace transport exchange
-EDHOC TRACE APP TX: type=EDHOC_M1 len=39 source=RFC9529 Section 3 Static DH CCS/kid
-EDHOC TRACE APP RX verified: type=EDHOC_M2 len=45 source=RFC9529 Section 3 Static DH CCS/kid
-RFC 9529 EDHOC message_2 accepted; sending message_3 trace bytes
-EDHOC TRACE APP TX: type=EDHOC_M3 len=19 source=RFC9529 Section 3 Static DH CCS/kid
+Security mode: unencrypted-edhoc-then-derived-lmk-encrypted
+Initial peer state: encrypt=false for EDHOC transport
+Starting unencrypted EDHOC trace transport exchange
+EDHOC message_2 accepted; sending message_3 while peer is still unencrypted
+Final unencrypted EDHOC ACK received; installing LMK on initiator
 TRACE-ONLY LMK derivation active
-Derived trace-only ESP-NOW LMK candidate len=16 exporter_label=0xF0 context=ESP-NOW-LMK-v1 session=0x1234
 LMK summary: len=16 sha256_prefix=AA:BB:CC:DD
-Milestone 5 PASS: 16-byte ESP-NOW LMK candidate derived after EDHOC trace transport
+Installing post-handshake LMK into ESP-NOW peer table
+Modifying existing peer ... encrypted=1
+Peer table updated successfully: encrypt=true LMK_len=16
+Security transition complete: peer is now encrypt=true
+Sending first post-handshake frame; ESP-NOW peer should encrypt this frame
+ENCRYPTED APP TX: type=KEY_TEST
+ENCRYPTED APP RX verified: type=KEY_TEST_ACK
+Milestone 6 PASS: derived LMK installed and encrypted ESP-NOW KEY_TEST round trip succeeded
 ```
 
-Responder:
+## Expected responder logs
 
 ```text
-EDHOC ESP-NOW thesis demo - Milestone 5
+EDHOC ESP-NOW thesis demo - Milestone 6
 Role: RESPONDER
-Security mode: unencrypted-rfc9529-edhoc-trace-plus-lmk-scaffold
-EDHOC TRACE APP RX verified: type=EDHOC_M1 len=39 source=RFC9529 Section 3 Static DH CCS/kid
-RFC 9529 EDHOC message_1 accepted; sending message_2 trace bytes
-EDHOC TRACE APP TX: type=EDHOC_M2 len=45 source=RFC9529 Section 3 Static DH CCS/kid
-EDHOC TRACE APP RX verified: type=EDHOC_M3 len=19 source=RFC9529 Section 3 Static DH CCS/kid
+Initial peer state: encrypt=false for EDHOC transport
+EDHOC message_1 accepted; sending message_2 while peer is still unencrypted
+EDHOC message_3 accepted; sending final ACK before enabling peer encryption
+Installing LMK on responder after final unencrypted ACK
 TRACE-ONLY LMK derivation active
-Derived trace-only ESP-NOW LMK candidate len=16 exporter_label=0xF0 context=ESP-NOW-LMK-v1 session=0x1234
 LMK summary: len=16 sha256_prefix=AA:BB:CC:DD
-Milestone 5 PASS: responder derived matching 16-byte ESP-NOW LMK candidate
+Peer table updated successfully: encrypt=true LMK_len=16
+Pairing state -> WAIT_KEY_TEST
+ENCRYPTED APP RX verified: type=KEY_TEST
+Encrypted KEY_TEST accepted; replying with encrypted KEY_TEST_ACK
+Milestone 6 PASS: responder received and acknowledged encrypted traffic using the derived LMK
 ```
 
-The exact `sha256_prefix` value is not important, but it should match on both boards.
+Both boards should print the same LMK hash prefix.
 
-## Important tests
+## Required negative test
 
-### Test 1: normal flow
+To prove the encrypted exchange depends on matching LMKs:
 
-Both boards should print `Milestone 5 PASS` and the same LMK summary prefix.
+1. Keep this value on Board A:
 
-### Test 2: wrong session ID
+```c
+#define MILESTONE6_CORRUPT_LMK_FOR_TEST 0
+```
 
-Change `EDHOC_TRACE_SESSION_ID` on only one board.
+2. Set this value on Board B only:
+
+```c
+#define MILESTONE6_CORRUPT_LMK_FOR_TEST 1
+```
+
+3. Rebuild and flash Board B.
 
 Expected result:
 
 ```text
-Ignoring message for unexpected session
-Milestone 5 PASS should not appear
+The two LMK summary prefixes differ.
+KEY_TEST is not successfully received or acknowledged.
+Milestone 6 PASS does not appear on the initiator.
+The ESP-NOW send callback may report FAIL.
 ```
 
-### Test 3: corrupted EDHOC byte
+Restore the value to `0` after the test.
 
-Change one byte in one RFC 9529 message array in `main/edhoc_trace_vectors.c` on only one board.
+## What Milestone 6 demonstrates
 
-Expected result:
+Milestone 6 demonstrates the engineering path required by the thesis:
 
 ```text
-bytes do not match RFC 9529 trace
-Pairing state -> FAILED
-Milestone 5 PASS should not appear
+pre-key unencrypted ESP-NOW transport
+    -> EDHOC-style exchange
+        -> shared 16-byte output
+            -> ESP-NOW peer-table update
+                -> encrypted post-handshake communication
 ```
 
-## Next milestone
+It does not yet demonstrate real EDHOC authentication, forward secrecy, or a standards-compliant EDHOC exporter because the Lakers runtime has not yet been linked.
 
-Milestone 6 should install the 16-byte value into the ESP-NOW peer table and switch to encrypted post-handshake ESP-NOW traffic.
+## Next phase
 
-However, before final thesis claims, replace the trace-only derivation with the real Lakers exporter:
+Replace the RFC trace and SHA-256 scaffold with a live Lakers session:
 
 ```text
-Lakers completed EDHOC session
-    -> edhoc_exporter(label, context, 16-byte output)
-    -> ESP-NOW LMK
+Lakers initiator.prepare_message_1()
+Lakers responder.process_message_1()
+Lakers responder.prepare_message_2()
+Lakers initiator.parse_message_2() + verify_message_2()
+Lakers initiator.prepare_message_3()
+Lakers responder.parse_message_3() + verify_message_3()
+Both completed sessions -> edhoc_exporter(..., 16-byte output)
+The existing Milestone 6 peer installation and KEY_TEST code stays unchanged.
 ```
