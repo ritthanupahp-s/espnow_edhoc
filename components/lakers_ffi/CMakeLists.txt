@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS "lakers_ffi_component.c"
     INCLUDE_DIRS "include"
+    PRIV_REQUIRES log
 )
 
 if(NOT IDF_TARGET STREQUAL "esp32")
