@@ -119,6 +119,12 @@ The exporter context is:
 || Wi-Fi channel
 ```
 
+The context length is 27 bytes:
+
+```text
+14-byte purpose + 6-byte initiator MAC + 6-byte responder MAC + 1-byte channel
+```
+
 The same byte ordering must be used later on both ESP32 devices.
 
 ## Expected output
@@ -133,7 +139,7 @@ exporter_label=0xF0
 initiator_mac=24:6F:28:11:22:33
 responder_mac=24:6F:28:AA:BB:CC
 wifi_channel=1
-exporter_context_len=28
+exporter_context_len=27
 exporter_context_hex=<context bytes>
 message_1_len=<generated length>
 message_1_hex=<live EDHOC message_1>
