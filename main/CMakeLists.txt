@@ -3,7 +3,6 @@ idf_component_register(
         "main.c"
         "espnow_transport.c"
         "edhoc_transport.c"
-        "edhoc_trace_vectors.c"
         "edhoc_exporter.c"
         "key_manager.c"
     PRIV_REQUIRES
