@@ -2,138 +2,137 @@
 
 Reference implementation: <https://github.com/lake-rs/lakers>
 
+## Current state
+
+Milestone 7 now includes a live Lakers host reference at:
+
+```text
+tools/lakers_reference
+```
+
+The reference performs a complete STAT-STAT / Cipher Suite 2 handshake, verifies matching `PRK_out`, and confirms that both completed peers export the same 16-byte ESP-NOW LMK.
+
+This separates two questions that were previously mixed together:
+
+```text
+1. Does Lakers produce valid M1/M2/M3 and matching exporter output?   YES, host reference
+2. Can the same Lakers runtime be linked into the ESP32 C firmware?  NEXT milestone
+```
+
 ## Why Lakers is relevant
 
-`lakers` is a Rust implementation of EDHOC / RFC 9528. Its README describes it as:
+Lakers is a Rust implementation of EDHOC / RFC 9528. Its upstream project describes it as:
 
 - `no_std`
-- optimized for microcontrollers
-- no heap allocations
+- microcontroller-oriented
+- no heap allocations in the core protocol
 - configurable crypto backends
-- with C bindings available through `lakers-c`
-- currently supporting EDHOC authentication mode STAT-STAT and Cipher Suite 2
+- providing C bindings through `lakers-c`
+- supporting STAT-STAT and Cipher Suite 2
 
-Those properties make it a good candidate for this ESP-NOW thesis project, especially because the current project already uses P-256 style raw-public-key assumptions.
+Those properties fit this thesis design, which uses constrained ESP32 nodes and pre-provisioned raw-public-key credentials.
 
-## Important integration reality
+## Live host reference API flow
 
-This ESP-IDF project is currently written in C. Lakers is written in Rust.
-
-There are three possible integration paths:
-
-```text
-Path A: Use Lakers C bindings as a prebuilt static library
-Path B: Add a Rust component to the ESP-IDF project and call it from C
-Path C: Keep the ESP-NOW transport in C but build the EDHOC handshake in a separate Rust firmware app
-```
-
-For this thesis prototype, the most practical path is:
-
-```text
-Path A first: Lakers C bindings -> C wrapper -> existing ESP-NOW transport
-```
-
-## Lakers API shape
-
-The Rust API follows EDHOC's message order:
+The current host reference runs:
 
 ```text
 Initiator:
-prepare_message_1()
-parse_message_2()
-verify_message_2()
-prepare_message_3()
-completed_without_message_4()
-edhoc_exporter()
+EdhocInitiator::new
+prepare_message_1
+parse_message_2
+credential_check_or_fetch
+set_identity
+verify_message_2
+prepare_message_3
+completed_without_message_4
+edhoc_exporter
 
 Responder:
-process_message_1()
-prepare_message_2()
-parse_message_3()
-verify_message_3()
-completed_without_message_4()
-edhoc_exporter()
+EdhocResponder::new
+process_message_1
+prepare_message_2
+parse_message_3
+credential_check_or_fetch
+verify_message_3
+completed_without_message_4
+edhoc_exporter
 ```
 
-The Lakers README shows application key derivation using:
-
-```rust
-let oscore_secret = initiator.edhoc_exporter(0u8, &[], 16);
-```
-
-In the current Lakers Rust source, the completed initiator and responder states expose:
-
-```rust
-pub fn edhoc_exporter(&mut self, label: u8, context: &[u8], result: &mut [u8])
-```
-
-For ESP-NOW LMK derivation, the target call is conceptually:
+The program checks:
 
 ```text
-lakers_completed_session.edhoc_exporter(
-    exporter_label_for_espnow_lmk,
-    espnow_context,
-    16-byte output buffer
-)
+initiator PRK_out == responder PRK_out
+initiator exporter output == responder exporter output
+exporter output length == 16 bytes
 ```
 
-## Exporter label note
+## Exporter definition used by this project
 
-The original project roadmap suggested a private-use EDHOC exporter label such as `32768`.
-
-Lakers currently exposes the label as `u8`, so the immediate integration needs a decision:
+Current project-local settings:
 
 ```text
-Option 1: use a project-local 8-bit label such as 0xF0 for the prototype
-Option 2: patch Lakers / Lakers C bindings to accept a wider integer label
-Option 3: confirm with the Lakers maintainers why the public API restricts labels to u8
+Exporter label: 0xF0
+Exporter output length: 16 bytes
 ```
 
-The current scaffold uses:
+Exporter context:
+
+```text
+"ESP-NOW-LMK-v1"
+|| initiator STA MAC
+|| responder STA MAC
+|| Wi-Fi channel
+```
+
+This context binds the LMK to:
+
+```text
+application purpose
+ordered peer identities
+radio channel
+```
+
+The ordering must be identical on both peers. The initiator MAC always comes first.
+
+## Exporter label issue
+
+The original roadmap considered a wider private-use exporter label such as `32768`.
+
+The current Lakers public API accepts a `u8` label:
+
+```rust
+edhoc_exporter(label: u8, context: &[u8], result: &mut [u8])
+```
+
+The prototype therefore uses:
 
 ```text
 0xF0
 ```
 
-This must be revisited before final thesis claims.
-
-## Current project state after Milestone 6
-
-The project now proves the full ESP-NOW handover mechanics:
+Before final standards-compliance claims, either:
 
 ```text
-unencrypted EDHOC-style transport
-    -> same 16-byte LMK-shaped output on both boards
-        -> esp_now_mod_peer() with encrypt=true
-            -> encrypted KEY_TEST / KEY_TEST_ACK round trip
+1. justify 0xF0 as a project-local label,
+2. confirm the intended usage with Lakers maintainers, or
+3. extend the Lakers API if a wider label is required.
 ```
 
-The remaining missing piece is the real Lakers runtime. The current code still uses:
+## What remains unchanged from Milestone 6
+
+The following C firmware logic should remain reusable:
 
 ```text
-RFC 9529 stored trace messages
-trace-only SHA-256 LMK scaffold
-```
-
-It is clearly marked as not being a real EDHOC exporter result.
-
-## Code that should remain unchanged
-
-Milestone 6 already provides reusable ESP-NOW integration code:
-
-```text
+espnow_transport.c/.h
 edhoc_transport.c/.h
 key_manager_enable_derived_espnow_encryption()
-KEY_TEST / KEY_TEST_ACK state transition
-peer encrypt=false -> encrypt=true handover
-negative LMK mismatch test
+peer encrypt=false -> encrypt=true transition
+KEY_TEST / KEY_TEST_ACK
+LMK mismatch negative test
 ```
 
-Real Lakers integration should replace only the current EDHOC backend and LMK source, not the ESP-NOW handover logic.
-
-## Functions to replace
-
-Replace the RFC trace functions:
+Only the temporary EDHOC backend should be replaced:
 
 ```c
 edhoc_trace_get_message()
@@ -141,115 +140,138 @@ edhoc_trace_verify_message()
 edhoc_exporter_trace_derive_espnow_lmk()
 ```
 
-with a Lakers-backed wrapper:
+## ESP32 integration reality
+
+The application firmware is C and built by ESP-IDF. Lakers is Rust.
+
+The upstream `lakers-c/build.sh` currently chooses:
+
+```text
+thumbv7em-none-eabihf for embedded Cortex-M4 backends
+host target for rustcrypto
+```
+
+It does not currently build an Xtensa ESP32 static library directly.
+
+Milestone 8 therefore needs an explicit ESP32 bridge rather than simply copying the existing Cortex-M archive into the project.
+
+## Preferred Milestone 8 architecture
+
+```text
+ESP-IDF C application
+        |
+        | extern "C" calls
+        v
+small Rust staticlib / ESP-IDF Rust component
+        |
+        v
+Lakers live session state
+        |
+        v
+ESP32-compatible crypto backend
+```
+
+The wrapper should own the typestated Lakers objects internally. C should only see opaque session state and byte buffers.
+
+## Target C-facing API
 
 ```c
 typedef enum {
-    EDHOC_ROLE_INITIATOR,
-    EDHOC_ROLE_RESPONDER,
-} edhoc_role_t;
+    EDHOC_LAKERS_ROLE_INITIATOR = 0,
+    EDHOC_LAKERS_ROLE_RESPONDER = 1,
+} edhoc_lakers_role_t;
 
-esp_err_t edhoc_lakers_session_init(edhoc_role_t role);
+int edhoc_lakers_session_init(
+    edhoc_lakers_role_t role
+);
 
-esp_err_t edhoc_lakers_make_message_1(
+int edhoc_lakers_make_message_1(
     uint8_t *out,
     size_t out_max,
     size_t *out_len
 );
 
-esp_err_t edhoc_lakers_process_message_1(
-    const uint8_t *m1,
-    size_t m1_len,
-    uint8_t *m2,
-    size_t m2_max,
-    size_t *m2_len
+int edhoc_lakers_process_message_1(
+    const uint8_t *message_1,
+    size_t message_1_len,
+    uint8_t *message_2,
+    size_t message_2_max,
+    size_t *message_2_len
 );
 
-esp_err_t edhoc_lakers_process_message_2(
-    const uint8_t *m2,
-    size_t m2_len,
-    uint8_t *m3,
-    size_t m3_max,
-    size_t *m3_len
+int edhoc_lakers_process_message_2(
+    const uint8_t *message_2,
+    size_t message_2_len,
+    uint8_t *message_3,
+    size_t message_3_max,
+    size_t *message_3_len
 );
 
-esp_err_t edhoc_lakers_process_message_3(
-    const uint8_t *m3,
-    size_t m3_len
+int edhoc_lakers_process_message_3(
+    const uint8_t *message_3,
+    size_t message_3_len
 );
 
-esp_err_t edhoc_lakers_export_espnow_lmk(
+int edhoc_lakers_export_espnow_lmk(
+    const uint8_t initiator_mac[6],
+    const uint8_t responder_mac[6],
+    uint8_t wifi_channel,
     uint8_t out_lmk[16]
 );
 ```
 
-`main.c` should continue passing the generated message buffers through `edhoc_transport_send()`.
+## Credential model
 
-## Raw public-key credential model
-
-For the thesis prototype:
+For the first ESP32 live integration:
 
 ```text
-Board A firmware stores:
+Board A stores:
 - Board A static private authentication key
-- Board A raw public-key credential
-- trusted Board B raw public-key credential
+- Board A CCS / raw-public-key credential
+- trusted Board B credential
 
-Board B firmware stores:
+Board B stores:
 - Board B static private authentication key
-- Board B raw public-key credential
-- trusted Board A raw public-key credential
+- Board B CCS / raw-public-key credential
+- trusted Board A credential
 ```
 
-Use credential transfer by reference where possible to keep ESP-NOW messages small.
+Use the public upstream test credentials first. Replace them with project-specific generated credentials only after the transport and build bridge work.
 
-## ESP-NOW exporter context
+## Crypto backend questions for Milestone 8
 
-The exporter context should bind the key to this application and pair:
+The bridge must resolve:
 
 ```text
-"ESP-NOW-LMK-v1"
-initiator STA MAC
-responder STA MAC
-Wi-Fi channel
-EDHOC connection identifiers or session identifier
+1. Which Rust ESP32 target is used by the installed ESP-IDF version?
+2. Can Lakers rustcrypto use an ESP32-compatible entropy source?
+3. Is an Mbed TLS / ESP-IDF crypto adapter preferable for P-256, SHA-256, HKDF, and AES-CCM?
+4. Does the target support every dependency required by lakers-crypto-rustcrypto?
+5. How are Rust panic handlers and allocation configured?
+6. How is the resulting static library linked by idf_component_register()?
 ```
 
-The output length must be exactly:
+## Milestone 8 acceptance conditions
+
+Both physical ESP32 devices must demonstrate:
 
 ```text
-16 bytes
+1. Initiator composes fresh Lakers message_1 on-device.
+2. Responder processes message_1 and composes fresh message_2 on-device.
+3. Initiator authenticates message_2 and composes message_3 on-device.
+4. Responder authenticates message_3 on-device.
+5. Both completed sessions export the same 16-byte LMK.
+6. Existing peer-table handover installs that LMK.
+7. Encrypted KEY_TEST / KEY_TEST_ACK succeeds.
+8. Replacing one trusted peer credential causes EDHOC authentication to fail.
+9. The stored RFC trace and SHA-256 scaffold are no longer used in the active path.
 ```
 
-because ESP-NOW LMKs are 16 bytes.
+## Useful commands for Milestone 7
 
-## Lakers C-binding build questions to resolve
-
-Before linking the static library into ESP-IDF, confirm:
-
-```text
-1. Lakers C release includes an Xtensa-compatible library, or can be cross-compiled for xtensa-esp32-none-elf.
-2. The chosen crypto backend can use ESP-IDF / Mbed TLS or another ESP32-compatible P-256 backend.
-3. The generated C header exposes both initiator and responder operations needed by this project.
-4. A C-callable completed-session exporter function is available; add one to lakers-c if it is missing.
-5. Rust panic and allocator settings are compatible with no_std ESP32 firmware.
-```
-
-The existing Lakers C wrapper exposes several initiator functions, but the integration should be checked carefully because the downloadable bindings and current source may not expose every high-level Rust API directly.
-
-## Definition of the next successful phase
-
-The Lakers integration is successful when both devices can demonstrate:
-
-```text
-1. message_1 is freshly composed by Lakers on the initiator
-2. message_1 is parsed and authenticated by Lakers on the responder
-3. message_2 is freshly composed by Lakers on the responder
-4. message_2 is parsed and authenticated by Lakers on the initiator
-5. message_3 is freshly composed by Lakers on the initiator
-6. message_3 is parsed and authenticated by Lakers on the responder
-7. both completed sessions export the same 16-byte LMK
-8. the existing Milestone 6 peer-table update succeeds
-9. encrypted KEY_TEST / KEY_TEST_ACK succeeds
-10. changing one trusted raw public key causes the EDHOC exchange to fail
+```bash
+cd tools/lakers_reference
+cargo test
+cargo run --release
+cargo run --release -- <initiator-mac> <responder-mac> <channel>
 ```
